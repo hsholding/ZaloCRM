@@ -104,6 +104,7 @@
         <thead>
           <tr>
             <th>Khách hàng</th>
+            <th class="w-110" title="Số nick zalo có log nhật ký nhắn tin với KH này">Nick có log</th>
             <th>Nick Zalo (Sale)</th>
             <th>Tên CRM / Nick (KH)</th>
             <th>Tên Zalo + UID</th>
@@ -115,6 +116,7 @@
             <th>Sale nhắn cuối</th>
             <th>Tin (in/out)</th>
             <th>Là bạn từ</th>
+            <th class="w-90">Auto</th>
             <th class="w-180">Action</th>
           </tr>
         </thead>
@@ -135,6 +137,18 @@
                   </span>
                   <span v-if="f.contact?.fullName" class="line3">{{ f.contact.fullName }}</span>
                 </div>
+              </div>
+            </td>
+
+            <!-- Nick có log (số nick zalo đã từng log với KH này) -->
+            <td>
+              <div class="nick-count-cell">
+                <span
+                  :class="['nick-count-badge', `lvl-${nickLogLevel(f)}`]"
+                  :title="`${nickLogCount(f)} nick đã log nhật ký với KH này`"
+                  @click="onShowNickLog(f)"
+                >{{ nickLogCount(f) }}</span>
+                <span class="nick-count-label">nick chăm</span>
               </div>
             </td>
 
@@ -175,12 +189,12 @@
               </span>
             </td>
 
-            <!-- Trạng thái KH -->
+            <!-- Trạng thái KH (per-nick care status, 9 enum) -->
             <td>
-              <span v-if="f.contact?.status" :class="['chip', statusChipClass(f.contact.status)]">
-                {{ statusLabel(f.contact.status) }}
-              </span>
-              <span v-else class="empty">—</span>
+              <CareStatusBadge
+                :model-value="careStatusOf(f)"
+                @update:model-value="(v) => onUpdateCareStatus(f, v)"
+              />
             </td>
 
             <!-- Nhãn CRM -->
@@ -229,6 +243,12 @@
               <span v-else class="empty">—</span>
             </td>
 
+            <!-- Auto (automation đang chạy) -->
+            <td>
+              <span v-if="autoLabelOf(f)" class="chip chip-info">{{ autoLabelOf(f) }}</span>
+              <span v-else class="empty">—</span>
+            </td>
+
             <!-- Action -->
             <td>
               <div class="action-cell">
@@ -251,7 +271,7 @@
           </tr>
 
           <tr v-if="!loadingDb && !friendsDb.length">
-            <td colspan="13" class="empty-state">
+            <td colspan="15" class="empty-state">
               {{ activeAccount ? 'Chưa có pair nào.' : 'Chọn 1 nick Zalo để xem.' }}
             </td>
           </tr>
@@ -274,9 +294,11 @@ import { useRouter } from 'vue-router';
 import { useFriends, type DbFriend } from '@/composables/use-friends';
 import { useZaloAccounts } from '@/composables/use-zalo-accounts';
 import {
-  STATUS_OPTIONS, GENDER_OPTIONS,
+  GENDER_OPTIONS,
   formatRecentDateTime,
 } from '@/composables/use-contacts';
+import CareStatusBadge, { type CareStatusValue } from '@/components/ui/CareStatusBadge.vue';
+import { useToast } from '@/composables/use-toast';
 
 const router = useRouter();
 const { accounts, fetchAccounts } = useZaloAccounts();
@@ -372,9 +394,46 @@ async function onSync() {
 function goChat(f: DbFriend) {
   if (f.contact?.id) router.push({ path: '/chat', query: { contactId: f.contact.id } });
 }
-function onSendInvite(_f: DbFriend) { /* TODO: call /friends/requests endpoint */ }
-function onCancelInvite(_f: DbFriend) { /* TODO: call DELETE /friends/requests/:userId */ }
-function onAutomation(_f: DbFriend) { /* TODO: open automation dialog */ }
+const toast = useToast();
+function onSendInvite(f: DbFriend) {
+  toast.warning(`Gửi mời KB qua nick ${f.zaloAccount?.displayName}: chưa wire endpoint`);
+}
+function onCancelInvite(f: DbFriend) {
+  toast.warning(`Hủy mời KB qua nick ${f.zaloAccount?.displayName}: chưa wire endpoint`);
+}
+function onAutomation(_f: DbFriend) {
+  toast.warning('Automation per-pair: chưa implement');
+}
+
+// ════════ Per-pair care status (9 enum) ════════
+// MOCK: backend chưa có Friend.customerCareStatus. Map tạm vào contact.status
+// (đã có trong DbFriend.contact). User đổi → toast cảnh báo chờ schema delta.
+function careStatusOf(f: DbFriend): CareStatusValue {
+  return ((f.contact?.status as CareStatusValue) || 'new') as CareStatusValue;
+}
+function onUpdateCareStatus(f: DbFriend, value: CareStatusValue) {
+  toast.warning(`Đổi care status → ${value}: chờ field Friend.customerCareStatus`);
+  void f;
+}
+
+// ════════ Nick có log (số nick đã log với KH này) ════════
+// MOCK: hiện friendsDb là per-pair, mỗi row 1 cặp. Số nick log với contactId
+// cần aggregate. Tạm trả 1 — chờ backend bổ sung field hoặc query separate.
+function nickLogCount(_f: DbFriend): number { return 1; }
+function nickLogLevel(f: DbFriend): number {
+  const n = nickLogCount(f);
+  if (n >= 4) return 4;
+  if (n >= 3) return 3;
+  if (n >= 2) return 2;
+  return 1;
+}
+function onShowNickLog(f: DbFriend) {
+  toast.push(`Detail ${nickLogCount(f)} nick log với ${f.contact?.crmName || 'KH'}: chưa implement`);
+}
+
+// ════════ Auto (automation đang chạy per-pair) ════════
+// MOCK: chờ Friend.automations relation
+function autoLabelOf(_f: DbFriend): string | null { return null; }
 
 // Formatters
 function initials(c?: { fullName: string | null; crmName: string | null } | null) {
@@ -387,9 +446,6 @@ function nickShort(name: string | null | undefined) {
 }
 function genderLabel(value: string) {
   return GENDER_OPTIONS.find(o => o.value === value)?.text ?? value;
-}
-function statusLabel(value: string) {
-  return STATUS_OPTIONS.find(o => o.value === value)?.text ?? value;
 }
 function kindLabel(kind: DbFriend['relationshipKind']): string {
   const map: Record<DbFriend['relationshipKind'], string> = {
@@ -420,16 +476,6 @@ function kindChipClass(kind: DbFriend['relationshipKind']): string {
     none: 'chip-grey',
   };
   return map[kind];
-}
-function statusChipClass(status: string): string {
-  const map: Record<string, string> = {
-    new: 'chip-grey',
-    contacted: 'chip-info',
-    interested: 'chip-warning',
-    converted: 'chip-success',
-    lost: 'chip-error',
-  };
-  return map[status] || 'chip-grey';
 }
 function ageOf(c?: { birthYear: number | null } | null): number | null {
   if (!c?.birthYear) return null;
@@ -727,6 +773,34 @@ onMounted(async () => {
   color: var(--smax-grey-700);
   font-style: italic;
 }
+
+/* Nick có log badge */
+.nick-count-cell {
+  display: flex; align-items: center; gap: 5px;
+}
+.nick-count-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  font-weight: 700; font-size: 12px;
+  color: white;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  background: var(--smax-grey-300);
+}
+.nick-count-badge.lvl-1 { background: var(--smax-grey-300); color: var(--smax-grey-700); }
+.nick-count-badge.lvl-2 { background: linear-gradient(135deg, #66bb6a, #2e7d32); }
+.nick-count-badge.lvl-3 { background: linear-gradient(135deg, #ffa726, #ef6c00); }
+.nick-count-badge.lvl-4 { background: linear-gradient(135deg, #ef5350, #c62828); }
+.nick-count-badge:hover { transform: scale(1.08); transition: transform 0.15s; }
+.nick-count-label {
+  font-size: 10.5px; color: var(--smax-grey-700);
+  white-space: nowrap;
+}
+
+.w-90 { width: 90px; }
+.w-110 { width: 110px; }
 
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 11px;
