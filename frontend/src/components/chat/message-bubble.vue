@@ -539,6 +539,7 @@ function openFile(href: string) {
 /* Text content with @mention + links */
 .text-content {
   word-break: break-word;
+  white-space: pre-wrap; /* fallback nếu \n không được replace bằng <br> */
 }
 
 /* Caption text below media (image/video/sticker/gif/file + text) */

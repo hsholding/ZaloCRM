@@ -209,7 +209,7 @@
         />
 
         <div class="input-toolbar-top">
-          <button class="icon-tool" title="Emoji" @click="todoToast('Emoji picker')">😊</button>
+          <EmojiPicker @pick="onPickEmoji" />
           <button class="icon-tool" title="Sticker" @click="todoToast('Sticker')">🎴</button>
           <button class="icon-tool spacer-after" title="GIF" @click="todoToast('GIF')">🎞</button>
           <button class="icon-tool" title="Đính kèm file" @click="todoToast('Attach file')">📎</button>
@@ -290,6 +290,7 @@ import { api } from '@/api/index';
 import AISuggestBar from '@/components/chat/AISuggestBar.vue';
 import CareStatusBadge from '@/components/ui/CareStatusBadge.vue';
 import Avatar from '@/components/ui/Avatar.vue';
+import EmojiPicker from '@/components/chat/EmojiPicker.vue';
 import QuickTemplatePopup from '@/components/chat/quick-template-popup.vue';
 import MessageBubble from '@/components/chat/message-bubble.vue';
 import MessageContextMenu from '@/components/chat/message-context-menu.vue';
@@ -510,6 +511,10 @@ async function fireWebhook() {
 
 function todoToast(label: string) {
   toast.push(`${label}: chưa implement`, 'warning');
+}
+
+function onPickEmoji(emoji: string) {
+  editorRef.value?.insertText(emoji);
 }
 
 // ── Display item types (album grouping + date dividers) ─────────────────────

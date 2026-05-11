@@ -68,11 +68,11 @@
 
     <!-- Generic rich content — best-effort render -->
     <div v-else class="rich-card">
-      <!-- Title -->
-      <div v-if="richTitle" class="rich-title">{{ richTitle }}</div>
+      <!-- Title (multi-line + Zalo params.styles bold/italic/color applied) -->
+      <div v-if="richTitleHtml" class="rich-title" v-html="richTitleHtml" />
 
-      <!-- Body text (with @mention + bullet rendering) -->
-      <div v-if="richBody" class="rich-body" v-html="richBody" />
+      <!-- Body text -->
+      <div v-if="richBodyHtml" class="rich-body" v-html="richBodyHtml" />
 
       <!-- Link -->
       <a v-if="richHref" :href="richHref" target="_blank" rel="noopener" class="rich-link">
@@ -80,10 +80,10 @@
       </a>
 
       <!-- Thumbnail image -->
-      <img v-if="richThumb" :src="richThumb" :alt="richTitle || 'preview'" class="rich-thumb" />
+      <img v-if="richThumb" :src="richThumb" :alt="title || 'preview'" class="rich-thumb" />
 
       <!-- Fallback khi không extract được gì có ý nghĩa -->
-      <div v-if="!richTitle && !richBody && !richHref && !richThumb" class="rich-fallback">
+      <div v-if="!richTitleHtml && !richBodyHtml && !richHref && !richThumb" class="rich-fallback">
         <v-icon size="14" class="mr-1">mdi-message-text</v-icon>
         Tin nhắn đặc biệt
       </div>
@@ -133,7 +133,7 @@ const callLabel = computed<string>(() => {
   return isVideo.value ? 'Cuộc gọi video' : 'Cuộc gọi';
 });
 
-// ── Generic title (reminder/poll/note) ───────────────────────────────────
+// ── Generic title (reminder/poll) ────────────────────────────────────────
 const title = computed<string>(() => props.content?.title || props.content?.name || '');
 
 // ── Poll options ─────────────────────────────────────────────────────────
@@ -145,32 +145,155 @@ const pollOptions = computed<string[]>(() => {
     .filter(Boolean);
 });
 
-// ── Note body ────────────────────────────────────────────────────────────
-const noteBody = computed<string>(() => {
-  const raw = props.content?.body || props.content?.content || props.content?.text || '';
-  return formatHtml(raw);
+// ════════════════════════════════════════════════════════════════════════
+// Zalo "rtf" rich-text format
+//   content.title — multi-line string với \n
+//   content.params (JSON string) — { styles: [{ st, start, len }], mentions: [...] }
+//     st: 'b' bold | 'i' italic | 'u' underline | 'c_FFXXXX' hex color | 'f_NN' size
+// ════════════════════════════════════════════════════════════════════════
+interface StyleMark { st: string; start: number; len: number }
+interface MentionMark { pos?: number; start?: number; len: number; uid?: string; user_name?: string }
+
+const paramsObj = computed<Record<string, unknown> | null>(() => {
+  const raw = props.content?.params;
+  if (!raw) return null;
+  if (typeof raw === 'object') return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  return null;
 });
 
-// ── Forwarded text ───────────────────────────────────────────────────────
-const forwardedText = computed<string>(() => {
-  const raw = props.content?.content || props.content?.text || props.content?.title || '';
-  return formatHtml(raw);
+const styles = computed<StyleMark[]>(() => {
+  const s = paramsObj.value?.styles;
+  return Array.isArray(s) ? (s as StyleMark[]) : [];
 });
 
-// ── Generic rich extraction ──────────────────────────────────────────────
-const richTitle = computed<string>(() => {
+const mentions = computed<MentionMark[]>(() => {
+  const m = paramsObj.value?.mentions;
+  return Array.isArray(m) ? (m as MentionMark[]) : [];
+});
+
+// ── HTML helpers ─────────────────────────────────────────────────────────
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function openTagFor(st: string): string {
+  if (st === 'b') return '<strong>';
+  if (st === 'i') return '<em>';
+  if (st === 'u') return '<u>';
+  if (st.startsWith('c_')) return `<span style="color:#${st.slice(2)}">`;
+  if (st.startsWith('s_')) return `<span style="font-size:${st.slice(2)}px">`;
+  return '';
+}
+function closeTagFor(st: string): string {
+  if (st === 'b') return '</strong>';
+  if (st === 'i') return '</em>';
+  if (st === 'u') return '</u>';
+  if (st.startsWith('c_')) return '</span>';
+  if (st.startsWith('s_')) return '</span>';
+  return '';
+}
+
+/**
+ * Apply style marks to plain text → escaped HTML with bold/italic/color spans.
+ * Walks text char-by-char, opens/closes tags at style boundaries.
+ * Linebreaks (\n) get converted to <br>. Mentions positions get wrapped in mention spans.
+ */
+function applyRichFormat(text: string, sList: StyleMark[], mList: MentionMark[]): string {
+  if (!text) return '';
+
+  // Build active-styles per character index
+  const len = text.length;
+  const activePerChar: string[][] = Array.from({ length: len }, () => []);
+  for (const m of sList) {
+    const start = Math.max(0, m.start | 0);
+    const end = Math.min(len, start + (m.len | 0));
+    for (let i = start; i < end; i++) activePerChar[i].push(m.st);
+  }
+  const mentionRanges: Set<number>[] = mList
+    .map(m => {
+      const start = Math.max(0, (m.pos ?? m.start ?? 0) | 0);
+      const end = Math.min(len, start + (m.len | 0));
+      const set = new Set<number>();
+      for (let i = start; i < end; i++) set.add(i);
+      return set;
+    });
+  const isMentionChar = (i: number) => mentionRanges.some(s => s.has(i));
+  const isMentionStart = (i: number) => mentionRanges.some(s => s.has(i) && !s.has(i - 1));
+  const isMentionEnd = (i: number) => mentionRanges.some(s => s.has(i) && !s.has(i + 1));
+
+  let out = '';
+  let prevKey = '';
+
+  function emitOpen(keys: string[]) {
+    return keys.map(openTagFor).filter(Boolean).join('');
+  }
+  function emitClose(keys: string[]) {
+    return [...keys].reverse().map(closeTagFor).filter(Boolean).join('');
+  }
+
+  let prevList: string[] = [];
+  for (let i = 0; i < len; i++) {
+    const cur = activePerChar[i].slice().sort();
+    const curKey = cur.join(',');
+    if (curKey !== prevKey) {
+      out += emitClose(prevList);
+      out += emitOpen(cur);
+      prevList = cur;
+      prevKey = curKey;
+    }
+
+    // Mention boundary
+    if (isMentionStart(i)) out += '<span class="mention">';
+
+    const ch = text[i];
+    if (ch === '\n') out += '<br>';
+    else if (ch === '\r') { /* ignore */ }
+    else out += escapeHtml(ch);
+
+    if (isMentionEnd(i)) out += '</span>';
+  }
+  out += emitClose(prevList);
+  return out;
+}
+
+/** Fallback: format raw text without style marks — just escape + mention regex + linebreak. */
+function plainFormat(text: string): string {
+  if (!text) return '';
+  let s = escapeHtml(text);
+  s = s.replace(/@([\p{L}][\p{L}0-9._-]+(?:\s[\p{L}][\p{L}0-9._-]+){0,2})/gu, '<span class="mention">@$1</span>');
+  s = s.replace(/\r?\n/g, '<br>');
+  return s;
+}
+
+// ── Rich card extraction with full formatting ────────────────────────────
+const richTitleHtml = computed<string>(() => {
   const t = props.content?.title || props.content?.subject;
-  return typeof t === 'string' ? t : '';
+  if (typeof t !== 'string' || !t.trim()) return '';
+  return styles.value.length || mentions.value.length
+    ? applyRichFormat(t, styles.value, mentions.value)
+    : plainFormat(t);
 });
-const richBody = computed<string>(() => {
+
+const richBodyHtml = computed<string>(() => {
   const raw = props.content?.text
     || props.content?.description
     || props.content?.body
     || props.content?.content
     || props.content?.caption
     || '';
-  return formatHtml(typeof raw === 'string' ? raw : '');
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  // Body uses simpler format (Zalo styles thường chỉ apply trên title)
+  return plainFormat(raw);
 });
+
 const richHref = computed<string>(() => {
   const h = props.content?.href || props.content?.url || props.content?.link;
   return typeof h === 'string' ? h : '';
@@ -189,25 +312,15 @@ const richThumb = computed<string>(() => {
   return typeof t === 'string' && t.startsWith('http') ? t : '';
 });
 
-// ── HTML formatter: escape + @mention + bullet + linebreaks ──────────────
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function formatHtml(raw: string): string {
-  if (!raw) return '';
-  let s = escapeHtml(raw);
-  // @mention: ký tự @ + tên (Vietnamese-aware): @Tên có dấu hoặc Eng
-  s = s.replace(/@([\p{L}][\p{L}0-9._-]+(?:\s[\p{L}][\p{L}0-9._-]+)?)/gu, '<span class="mention">@$1</span>');
-  // Linebreak → <br>
-  s = s.replace(/\r?\n/g, '<br>');
-  return s;
-}
+// Note + forwarded reuse plainFormat
+const noteBody = computed<string>(() => {
+  const raw = props.content?.body || props.content?.content || props.content?.text || '';
+  return plainFormat(typeof raw === 'string' ? raw : '');
+});
+const forwardedText = computed<string>(() => {
+  const raw = props.content?.content || props.content?.text || props.content?.title || '';
+  return plainFormat(typeof raw === 'string' ? raw : '');
+});
 </script>
 
 <style scoped>
@@ -228,6 +341,8 @@ function formatHtml(raw: string): string {
   font-weight: 600;
   margin-bottom: 4px;
   color: var(--smax-text, #212121);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .rich-body {
   color: var(--smax-text, #212121);
@@ -273,12 +388,14 @@ function formatHtml(raw: string): string {
 .forwarded-body {
   color: var(--smax-text, #212121);
   word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .note-body {
   font-size: 13px;
   color: var(--smax-text, #212121);
   word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .poll-options {
@@ -288,6 +405,18 @@ function formatHtml(raw: string): string {
   font-size: 13px;
 }
 .poll-options li { padding: 2px 0; }
+
+/* Rich styling — preserve normal-weight inside body, only emphasize via tags */
+:deep(.rich-title strong),
+:deep(.rich-body strong),
+:deep(.note-body strong),
+:deep(.forwarded-body strong) {
+  font-weight: 700;
+}
+:deep(.rich-title em),
+:deep(.rich-body em) { font-style: italic; }
+:deep(.rich-title u),
+:deep(.rich-body u) { text-decoration: underline; }
 
 /* Mention highlight - styled across all rich/note/forwarded contents */
 :deep(.mention) {

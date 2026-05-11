@@ -134,7 +134,13 @@ function focus() {
   editor.value?.commands.focus();
 }
 
-defineExpose({ clear, focus });
+/** Insert plain text/emoji at cursor position */
+function insertText(text: string) {
+  if (!text) return;
+  editor.value?.chain().focus().insertContent(text).run();
+}
+
+defineExpose({ clear, focus, insertText });
 
 onBeforeUnmount(() => { editor.value?.destroy(); });
 </script>
