@@ -1,7 +1,26 @@
 <template>
   <div class="special-message" :data-type="type">
-    <!-- Bank Transfer -->
-    <v-card v-if="type === 'bank_transfer'" variant="tonal" color="success" class="pa-3" rounded="lg">
+    <!-- Bank Account card (Zalo zinstant.bankcard) — iframe Zalo PC HTML render -->
+    <div v-if="type === 'bank_transfer' && bankCardUrl" class="bank-card">
+      <iframe
+        :src="bankCardUrl"
+        class="bank-card-frame"
+        loading="lazy"
+        sandbox="allow-same-origin allow-scripts allow-popups"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
+      <div class="bank-card-footer">
+        <v-icon size="14" color="success" class="mr-1">mdi-bank-transfer</v-icon>
+        <span>{{ bankCardLabel || 'Tài khoản ngân hàng' }}</span>
+        <v-spacer />
+        <a :href="bankCardUrl" target="_blank" rel="noopener" class="bank-card-open">
+          Mở <v-icon size="11">mdi-open-in-new</v-icon>
+        </a>
+      </div>
+    </div>
+
+    <!-- Bank Transfer (legacy: có bankCode/amount inline) -->
+    <v-card v-else-if="type === 'bank_transfer'" variant="tonal" color="success" class="pa-3" rounded="lg">
       <div class="d-flex align-center">
         <v-icon icon="mdi-bank-transfer" size="28" class="mr-3" />
         <div>
@@ -428,6 +447,25 @@ const qrImageUrl = computed<string>(() => {
   } catch { return ''; }
 });
 
+// ── Bank account card (Zalo zinstant.bankcard) ───────────────────────────
+// params.pcItem.data_url là URL HTML render cho PC web (đã có ?data=html)
+// params.item.data_url là cho mobile, ưu tiên pcItem nếu có.
+const bankCardUrl = computed<string>(() => {
+  const params = paramsObj.value;
+  if (!params) return '';
+  const pcUrl = (params.pcItem as Record<string, unknown> | undefined)?.data_url;
+  if (typeof pcUrl === 'string' && pcUrl) return pcUrl;
+  const itemUrl = (params.item as Record<string, unknown> | undefined)?.data_url;
+  if (typeof itemUrl === 'string' && itemUrl) return itemUrl;
+  return '';
+});
+const bankCardLabel = computed<string>(() => {
+  const params = paramsObj.value;
+  const customMsg = params?.customMsg as Record<string, unknown> | undefined;
+  const msg = customMsg?.msg as Record<string, unknown> | undefined;
+  return String(msg?.vi || msg?.en || 'Tài khoản ngân hàng');
+});
+
 // ── Link preview ─────────────────────────────────────────────────────────
 // Domain hiển thị nhỏ ở footer card
 const linkDomain = computed<string>(() => {
@@ -651,6 +689,40 @@ const linkDescription = computed<string>(() => {
   font-family: monospace;
   margin-top: 4px;
 }
+
+/* Bank account card (Zalo zinstant) — iframe full Zalo PC HTML render */
+.bank-card {
+  border: 1px solid var(--smax-grey-200, #e0e0e0);
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+  max-width: 320px;
+}
+.bank-card-frame {
+  display: block;
+  width: 100%;
+  height: 220px;
+  border: 0;
+  background: #f5f5f5;
+}
+.bank-card-footer {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  background: rgba(76, 175, 80, 0.06);
+  border-top: 1px solid var(--smax-grey-200);
+  font-size: 11px;
+  color: var(--smax-grey-700);
+}
+.bank-card-open {
+  color: #2e7d32;
+  text-decoration: none;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.bank-card-open:hover { text-decoration: underline; }
 
 /* QR Code card */
 .qr-card {

@@ -54,6 +54,11 @@ export function detectContentType(msgType: string | undefined, content: any): st
     if (typeof content.description === 'string' && content.description.includes('qrCodeUrl')) {
       return 'qr_code';
     }
+    // Bank account card (zinstant variant): action='zinstant.bankcard', title/href trống,
+    // bank info ở params.item.data_url (zinstant HTML render URL).
+    if (action === 'zinstant.bankcard' || (typeof content.params === 'string' && content.params.includes('zinstant.bankcard'))) {
+      return 'bank_transfer';
+    }
     if (content.bankCode || content.bankName) return 'bank_transfer';
     if (content.callDuration !== undefined || content.callType) return 'call';
     // Link auto-unfurl: có thumb + href + action rỗng (không phải reminder/call/bank)
