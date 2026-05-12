@@ -368,10 +368,20 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
         threadType,
       );
 
+      // Extract zaloMsgId từ sendSticker result để dedup với selfListen echo
+      // (cũ: zaloMsgId undefined → selfListen tạo row 2 → double sticker UI)
+      const sr = result as unknown as {
+        message?: { msgId?: number | string } | null;
+        msgId?: number | string;
+      };
+      const rawId = sr?.message?.msgId ?? sr?.msgId ?? '';
+      const zaloMsgId = String(rawId || '');
+
       const created = await prisma.message.create({
         data: {
           id: randomUUID(),
           conversationId: id,
+          zaloMsgId: zaloMsgId || null,
           senderType: 'self',
           senderUid: '',
           senderName: 'Staff',

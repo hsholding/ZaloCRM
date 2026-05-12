@@ -148,8 +148,12 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     if (!catId || !id) return reply.status(400).send({ error: 'catId and id required' });
 
     const cacheKey = `${catId}:${id}`;
+    const wantImage = (request.query as { img?: string }).img === '1';
     const cached = stickerMetaCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
+      if (wantImage) {
+        return reply.header('Cache-Control', 'public, max-age=86400').redirect(cached.data.staticUrl);
+      }
       return reply.header('Cache-Control', 'public, max-age=86400').send(cached.data);
     }
 
@@ -195,6 +199,9 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
       };
 
       stickerMetaCache.set(cacheKey, { data: meta, expiresAt: Date.now() + STICKER_CACHE_TTL_MS });
+      if (wantImage) {
+        return reply.header('Cache-Control', 'public, max-age=86400').redirect(staticUrl);
+      }
       return reply.header('Cache-Control', 'public, max-age=86400').send(meta);
     } catch (err) {
       logger.warn('[sticker] fetch error:', err);

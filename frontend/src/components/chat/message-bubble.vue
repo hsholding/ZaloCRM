@@ -96,10 +96,11 @@
                   animation: `sticker-play ${stickerMeta.duration * stickerMeta.totalFrames}ms steps(${stickerMeta.totalFrames}) infinite`,
                 }"
               ></div>
-              <!-- Static sticker: img tag -->
+              <!-- Static sticker hoặc fallback while loading metadata: img tag với staticUrl
+                   (nếu chưa load xong meta, fallback dùng URL trực tiếp từ content via proxy) -->
               <img
-                v-else-if="stickerMeta && stickerMeta.staticUrl"
-                :src="stickerMeta.staticUrl"
+                v-else-if="stickerFallbackUrl"
+                :src="stickerMeta?.staticUrl || stickerFallbackUrl"
                 alt="sticker"
                 class="sticker-img"
               />
@@ -363,8 +364,21 @@ async function fetchStickerMeta(catId: string | number, id: string | number) {
   }
 }
 
+// Fallback URL — img render ngay từ proxy endpoint với ?img=1 → redirect Zalo CDN
+// (Trong khi metadata async fetch chưa xong, hoặc nếu fetch fail. Tránh "🎴 Sticker" text)
+const stickerFallbackUrl = computed<string>(() => {
+  if (props.message.contentType !== 'sticker' || !props.message.content) return '';
+  const p = safeParse(props.message.content);
+  if (!p || typeof p !== 'object') return '';
+  const id = (p as Record<string, unknown>).id;
+  const catId = (p as Record<string, unknown>).catId;
+  if (!id || !catId) return '';
+  return `/api/v1/zalo-sticker/${catId}/${id}?img=1`;
+});
+
 watch(() => props.message.content, (content) => {
   if (props.message.contentType !== 'sticker' || !content) return;
+  stickerMeta.value = null; // reset khi message thay đổi (list reuse component)
   const p = safeParse(content);
   if (!p || typeof p !== 'object') return;
   const id = (p as Record<string, unknown>).id;
