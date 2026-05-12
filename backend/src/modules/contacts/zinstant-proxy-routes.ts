@@ -271,23 +271,39 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
       return reply.header('Cache-Control', 'private, max-age=600').send(cached.data);
     }
 
-    const account = await prisma.zaloAccount.findFirst({
+    // Thử TẤT CẢ connected accounts đến khi có 1 trả profile.
+    // Lý do: nhiều tài khoản trong cùng group nhưng chỉ 1 số là friend của UID
+    // → account không friend trả empty → trước đó chỉ thử account đầu tiên → 404.
+    const accounts = await prisma.zaloAccount.findMany({
       where: { status: 'connected' },
       select: { id: true },
     });
-    if (!account) return reply.status(503).send({ error: 'no connected Zalo account' });
+    if (accounts.length === 0) return reply.status(503).send({ error: 'no connected Zalo account' });
 
-    const instance = zaloPool.getInstance(account.id);
-    const userApi = instance?.api as {
-      getUserInfo?: (uid: string) => Promise<{ changed_profiles?: Record<string, Record<string, unknown>> }>;
-    } | undefined;
-    if (!userApi?.getUserInfo) return reply.status(503).send({ error: 'Zalo API not available' });
+    let profile: Record<string, unknown> | null = null;
+    for (const acc of accounts) {
+      const instance = zaloPool.getInstance(acc.id);
+      const userApi = instance?.api as {
+        getUserInfo?: (uid: string) => Promise<{ changed_profiles?: Record<string, Record<string, unknown>> }>;
+      } | undefined;
+      if (!userApi?.getUserInfo) continue;
+      try {
+        const result = await userApi.getUserInfo(uid);
+        const profiles = result?.changed_profiles || {};
+        const p = profiles[uid] || profiles[`${uid}_0`];
+        // Chấp nhận khi profile có ít nhất zaloName hoặc avatar (không rỗng)
+        if (p && (p.zaloName || p.zalo_name || p.displayName || p.avatar)) {
+          profile = p;
+          break;
+        }
+      } catch (err) {
+        logger.warn(`[user-info] account ${acc.id} failed for ${uid}:`, err);
+      }
+    }
+
+    if (!profile) return reply.status(404).send({ error: 'user not found in any account' });
 
     try {
-      const result = await userApi.getUserInfo(uid);
-      const profiles = result?.changed_profiles || {};
-      const profile = profiles[uid] || profiles[`${uid}_0`];
-      if (!profile) return reply.status(404).send({ error: 'user not found' });
 
       // Normalize fields — full Zalo getUserInfo response shape
       const bizPkgRaw = profile.bizPkg as Record<string, unknown> | null | undefined;
