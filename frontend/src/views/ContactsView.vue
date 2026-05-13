@@ -44,6 +44,14 @@
         ⊜ Trùng lặp
         <span v-if="duplicateTotal > 0" class="btn-badge">{{ duplicateTotal }}</span>
       </button>
+      <button class="btn" @click="showCandidateDialog = true">
+        💡 Gợi ý KH Cha
+        <span v-if="candidateCount > 0" class="btn-badge">{{ candidateCount }}</span>
+      </button>
+      <label class="toggle-inline">
+        <input type="checkbox" v-model="showChildrenFlag" @change="onToggleShowChildren" />
+        Hiện cả KH con
+      </label>
       <button class="btn">⬇ Xuất</button>
       <button class="btn btn-primary" @click="openCreate">+ Thêm KH</button>
     </div>
@@ -132,14 +140,21 @@
                 <span v-else class="empty">—</span>
               </td>
               <td>
-                <span v-if="contact.status" :class="['chip', statusChipClass(contact.status)]">
-                  {{ statusLabel(contact.status) }}
+                <!-- Status chip dùng displayStatus aggregate (Cha = MAX order của Con). Color từ Status table. -->
+                <span
+                  v-if="contact.displayStatus"
+                  class="chip"
+                  :style="{ background: chipBg(contact.displayStatus.color), color: chipFg(contact.displayStatus.color) }"
+                  :title="contact.childrenCount && contact.childrenCount > 0 ? `Aggregate từ ${contact.childrenCount} KH con` : ''"
+                >
+                  {{ contact.displayStatus.name }}
                 </span>
+                <span v-else-if="contact.status" :class="['chip', statusChipClass(contact.status)]">{{ statusLabel(contact.status) }}</span>
                 <span v-else class="empty">—</span>
               </td>
               <td>
-                <span :class="['chip', scoreChipClass(contact.leadScore)]">
-                  {{ contact.leadScore ?? 0 }}
+                <span :class="['chip', scoreChipClass(contact.displayLeadScore ?? contact.leadScore)]">
+                  {{ Math.round(contact.displayLeadScore ?? contact.leadScore ?? 0) }}
                 </span>
               </td>
               <td>
@@ -309,6 +324,7 @@
 
     <!-- Dialogs (giữ nguyên) -->
     <ContactDetailDialog v-model="showDialog" :contact="selectedContact" @saved="onSaved" @deleted="onDeleted" />
+    <ParentCandidateDialog v-model="showCandidateDialog" @resolved="onCandidateResolved" />
     <DuplicateReviewDialog v-model="showDuplicateDialog" @merged="onDuplicateMerged" />
   </div>
 </template>
@@ -317,6 +333,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
+import ParentCandidateDialog from '@/components/contacts/ParentCandidateDialog.vue';
 import DuplicateReviewDialog from '@/components/contacts/DuplicateReviewDialog.vue';
 import CareStatusBadge from '@/components/ui/CareStatusBadge.vue';
 import type { CareStatusValue } from '@/constants/care-status';
@@ -341,6 +358,21 @@ const toast = useToast();
 
 const showDialog = ref(false);
 const showDuplicateDialog = ref(false);
+const showCandidateDialog = ref(false);
+const showChildrenFlag = ref(false);
+const candidateCount = ref(0);
+async function fetchCandidateCount() {
+  try {
+    const res = await api.get<{ candidates: unknown[] }>('/contacts/parent-candidates');
+    candidateCount.value = (res.data.candidates || []).length;
+  } catch { candidateCount.value = 0; }
+}
+function onCandidateResolved() { fetchCandidateCount(); fetchContacts(); }
+function onToggleShowChildren() {
+  filters.showChildren = showChildrenFlag.value;
+  pagination.page = 1;
+  fetchContacts();
+}
 const selectedContact = ref<Contact | null>(null);
 const expandedId = ref<string | null>(null);
 // Real friendship data per contact (key: contactId → ChildRow[]). Fetched on first expand.
@@ -475,6 +507,18 @@ function scoreChipClass(score: number): string {
   if (score >= 40) return 'chip-warning';
   return 'chip-error';
 }
+// Status color helpers — hex từ Status.color → background nhạt + foreground đậm cho readable chip.
+function chipBg(hex: string | null | undefined): string {
+  if (!hex) return 'rgba(90,100,120,0.10)';
+  // hex → rgba 0.15 alpha
+  const m = hex.match(/^#([0-9a-f]{6})$/i);
+  if (!m) return 'rgba(90,100,120,0.10)';
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},0.15)`;
+}
+function chipFg(hex: string | null | undefined): string {
+  return hex || 'var(--smax-grey-700)';
+}
 function ageOf(c: Contact): number | null {
   const cy = new Date().getFullYear();
   if (c.birthDate) {
@@ -581,6 +625,7 @@ function onDuplicateMerged() {
 onMounted(() => {
   fetchContacts();
   fetchDuplicateGroups();
+  fetchCandidateCount();
 });
 </script>
 
@@ -643,6 +688,9 @@ onMounted(() => {
 .toolbar .date-input { max-width: 140px; }
 .date-separator { color: var(--smax-grey-700); font-size: 12px; }
 .spacer { flex: 1 0 auto; }
+.toggle-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--smax-grey-700); cursor: pointer; padding: 6px 10px; border-radius: 6px; }
+.toggle-inline:hover { background: rgba(0,0,0,0.04); }
+.toggle-inline input { cursor: pointer; }
 .btn {
   padding: 7px 13px;
   border: 1px solid var(--smax-primary);

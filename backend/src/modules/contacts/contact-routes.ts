@@ -548,6 +548,94 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── GET /api/v1/contacts/parent-candidates — list undismissed suggestion ────
+  app.get('/api/v1/contacts/parent-candidates', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const candidates = await prisma.parentCandidate.findMany({
+        where: { orgId: user.orgId, dismissed: false, resolvedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+      // Hydrate contact info cho mỗi candidate
+      const allIds = Array.from(new Set(candidates.flatMap(c => c.contactIds)));
+      const contacts = allIds.length === 0 ? [] : await prisma.contact.findMany({
+        where: { id: { in: allIds }, orgId: user.orgId },
+        select: { id: true, fullName: true, phone: true, zaloUid: true, zaloGlobalId: true, avatarUrl: true, parentContactId: true },
+      });
+      const byId = new Map(contacts.map(c => [c.id, c]));
+      const enriched = candidates.map(c => ({
+        ...c,
+        contacts: c.contactIds.map(id => byId.get(id)).filter(Boolean),
+      }));
+      return reply.send({ candidates: enriched });
+    } catch (err) {
+      logger.error('[contacts] list parent-candidates error:', err);
+      return reply.status(500).send({ error: 'Failed to list candidates' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/parent-candidates/:id/accept ───────────────────────
+  // body: { parentContactId } — chỉ định contact nào làm Cha (canonical), các còn lại làm Con
+  app.post('/api/v1/contacts/parent-candidates/:id/accept', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const { parentContactId } = (request.body || {}) as { parentContactId?: string };
+      if (!parentContactId) return reply.status(400).send({ error: 'parentContactId required' });
+
+      const candidate = await prisma.parentCandidate.findFirst({
+        where: { id, orgId: user.orgId, dismissed: false, resolvedAt: null },
+      });
+      if (!candidate) return reply.status(404).send({ error: 'Candidate not found or already resolved' });
+      if (!candidate.contactIds.includes(parentContactId)) {
+        return reply.status(400).send({ error: 'parentContactId must be in candidate group' });
+      }
+
+      // Set parentContactId cho các contact khác trong cụm
+      const childrenIds = candidate.contactIds.filter(cid => cid !== parentContactId);
+      await prisma.$transaction([
+        ...childrenIds.map(cid => prisma.contact.updateMany({
+          where: { id: cid, orgId: user.orgId, mergedInto: null, parentContactId: null },
+          data: { parentContactId },
+        })),
+        prisma.parentCandidate.update({
+          where: { id },
+          data: { resolvedAt: new Date(), resolvedBy: user.id, dismissed: false },
+        }),
+        prisma.activityLog.create({
+          data: {
+            orgId: user.orgId, userId: user.id,
+            action: 'parent_candidate_accept', entityType: 'contact', entityId: parentContactId,
+            details: { candidateId: id, childrenIds, matchType: candidate.matchType },
+          },
+        }),
+      ]);
+      return reply.send({ accepted: true, parentContactId, childrenCount: childrenIds.length });
+    } catch (err) {
+      logger.error('[contacts] accept parent-candidate error:', err);
+      return reply.status(500).send({ error: 'Failed to accept candidate' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/parent-candidates/:id/dismiss ──────────────────────
+  app.post('/api/v1/contacts/parent-candidates/:id/dismiss', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const candidate = await prisma.parentCandidate.findFirst({ where: { id, orgId: user.orgId } });
+      if (!candidate) return reply.status(404).send({ error: 'Candidate not found' });
+      await prisma.parentCandidate.update({
+        where: { id },
+        data: { dismissed: true, resolvedAt: new Date(), resolvedBy: user.id },
+      });
+      return reply.send({ dismissed: true });
+    } catch (err) {
+      logger.error('[contacts] dismiss parent-candidate error:', err);
+      return reply.status(500).send({ error: 'Failed to dismiss candidate' });
+    }
+  });
+
   // ── POST /api/v1/admin/migrate-status-table — one-off seed + convert enum ────
   app.post('/api/v1/admin/migrate-status-table', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

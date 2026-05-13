@@ -34,6 +34,7 @@ model Organization {
   friendshipAttempts     FriendshipAttempt[]
   friends                Friend[]
   statuses               Status[]
+  parentCandidates       ParentCandidate[]
 
   @@map("organizations")
 }
@@ -469,6 +470,26 @@ model DuplicateGroup {
 
   @@index([orgId, resolved])
   @@map("duplicate_groups")
+}
+
+// Parent-Child candidate — detector cron đề xuất cặp contact c-thể là cùng person
+// nhưng khác globalId (vd cùng tên + cùng phone) → sale duyệt accept/dismiss.
+// Khác DuplicateGroup: KHÔNG auto-merge; user decide explicit.
+model ParentCandidate {
+  id         String   @id @default(uuid())
+  orgId      String   @map("org_id")
+  contactIds String[] @map("contact_ids") // 2+ contact id trong cụm gợi ý
+  matchType  String   @map("match_type") // name_phone | name_birthDate | name_email
+  confidence Float    @default(0.9)
+  dismissed  Boolean  @default(false)
+  resolvedAt DateTime? @map("resolved_at")  // set khi sale accept hoặc dismiss
+  resolvedBy String?   @map("resolved_by")  // userId
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, dismissed, createdAt])
+  @@map("parent_candidates")
 }
 
 // Saved analytics report configuration

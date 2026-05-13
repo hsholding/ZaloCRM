@@ -23,9 +23,17 @@ export interface Contact {
   zaloUid?: string | null;
   zaloGlobalId?: string | null;
   zaloUsername?: string | null;
-  _count?: { conversations?: number; appointments?: number };
+  _count?: { conversations?: number; appointments?: number; children?: number };
   // Aggregate Friend rows theo relationshipKind: friend / pending_friend / chatting_stranger / ghost
   nicksByKind?: Record<string, number>;
+  // Parent-child fields (PR 1/PR 2 new):
+  parentContactId?: string | null;
+  statusId?: string | null;
+  statusRef?: { id: string; name: string; order: number; color: string | null; isTerminal: boolean } | null;
+  displayStatus?: { id: string; name: string; order: number; color: string | null; isTerminal: boolean } | null;
+  displayLeadScore?: number;
+  displayHasZalo?: boolean | null;
+  childrenCount?: number;
   nextAppointment: string | null;
   notes: string | null;
   tags: string[];
@@ -187,6 +195,7 @@ export interface ContactFilters {
   search: string;
   source: string;
   status: string;
+  showChildren?: boolean;  // false = chỉ Cha; true = flat (Cha + Con)
 }
 
 export const SOURCE_OPTIONS = [
@@ -229,6 +238,7 @@ export function useContacts() {
           search: filters.search || undefined,
           source: filters.source || undefined,
           status: filters.status || undefined,
+          showChildren: filters.showChildren ? 'true' : undefined,
         },
       });
       contacts.value = res.data.contacts ?? res.data;
