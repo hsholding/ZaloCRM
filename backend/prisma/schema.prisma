@@ -33,6 +33,7 @@ model Organization {
   groupPolls          GroupPoll[]
   friendshipAttempts     FriendshipAttempt[]
   friends                Friend[]
+  statuses               Status[]
 
   @@map("organizations")
 }
@@ -135,7 +136,13 @@ model Contact {
   source           String?   // FB, TT, GT, CN, phone_import, etc.
   sourceDate       DateTime? @map("source_date")
   firstContactDate DateTime? @map("first_contact_date")
-  status           String?   @default("new") // new/contacted/interested/converted/lost
+  status           String?   @default("new") // LEGACY: new/contacted/interested/converted/lost — giữ 1 release, sau drop. Field mới: statusId FK -> Status table
+  statusId         String?   @map("status_id")
+  // ── Parent-Child (KH cha gom nhiều KH con — cross-Zalo-identity human-level link) ───
+  // Khác mergedInto (hard-merge same Zalo identity, secondary hidden): parentContactId
+  // soft-link, child visible, aggregate status/score/hasZalo từ children. Canonical son
+  // làm cha → parentContactId=NULL cho cha, các con khác trỏ về.
+  parentContactId  String?   @map("parent_contact_id")
   nextAppointment  DateTime? @map("next_appointment")
   assignedUserId   String?   @map("assigned_user_id")
   notes            String?
@@ -205,6 +212,9 @@ model Contact {
   assignedUser      User?        @relation("AssignedContacts", fields: [assignedUserId], references: [id])
   mergedIntoContact Contact?     @relation("ContactMerge", fields: [mergedInto], references: [id])
   mergedFrom        Contact[]    @relation("ContactMerge")
+  parent            Contact?     @relation("ContactFather", fields: [parentContactId], references: [id], onDelete: SetNull)
+  children          Contact[]    @relation("ContactFather")
+  statusRef         Status?      @relation(fields: [statusId], references: [id], onDelete: SetNull)
   conversations     Conversation[]
   appointments      Appointment[]
   attempts          FriendshipAttempt[]
@@ -230,7 +240,33 @@ model Contact {
   @@index([phone2])
   @@index([phone3])
   @@index([orgId, acceptedNicksCount])
+  @@index([orgId, parentContactId])
+  @@index([orgId, statusId])
   @@map("contacts")
+}
+
+// Status (Trạng thái KH) — per-org config replacing Contact.status enum cũ.
+// Default seed 8 status: Mới/Tiếp cận/Hẹn gặp/Nóng/Tiềm năng/Chốt/Thất Bại/Mất.
+// `order` Int: dùng cho aggregation Cha = MAX(sons.status.order).
+// `isTerminal`: status kết thúc (Chốt/Thất Bại/Mất) — UI có thể style khác.
+// `isDefault`: 1 status được flag default cho Contact mới (Mới).
+model Status {
+  id          String   @id @default(uuid())
+  orgId       String   @map("org_id")
+  name        String
+  order       Int      @default(0)
+  color       String?
+  isTerminal  Boolean  @default(false) @map("is_terminal")
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contacts Contact[]
+
+  @@unique([orgId, name])
+  @@index([orgId, order])
+  @@map("statuses")
 }
 
 // A chat thread between a Zalo account and a contact (or group)

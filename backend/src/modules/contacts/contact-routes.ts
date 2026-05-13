@@ -10,6 +10,8 @@ import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { runContactIntelligence } from './contact-intelligence.js';
 import { backfillGlobalId, backfillOrphanFriends } from './backfill-global-id.js';
+import { migrateStatusTable } from './status-migration.js';
+import { computeAggregateDisplay, AGGREGATE_INCLUDE } from './contact-aggregate-display.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 
 type QueryParams = Record<string, string>;
@@ -28,9 +30,12 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         source = '',
         status = '',
         assignedUserId = '',
+        showChildren = '',  // 'true' → bỏ filter cha-only, show flat (cha + con)
       } = request.query as QueryParams;
 
       const where: any = { orgId: user.orgId, mergedInto: null };
+      // Default: chỉ hiện KH Cha (parentContactId IS NULL). Toggle showChildren=true để show cả con.
+      if (showChildren !== 'true') where.parentContactId = null;
       if (source) where.source = source;
       if (status) where.status = status;
       if (assignedUserId) where.assignedUserId = assignedUserId;
@@ -51,7 +56,8 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           where,
           include: {
             assignedUser: { select: { id: true, fullName: true, email: true } },
-            _count: { select: { conversations: true, appointments: true } },
+            _count: { select: { conversations: true, appointments: true, children: true } },
+            ...AGGREGATE_INCLUDE,
           },
           orderBy: { updatedAt: 'desc' },
           skip: (pageNum - 1) * limitNum,
@@ -60,26 +66,40 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.contact.count({ where }),
       ]);
 
-      // Aggregate Friend rows theo relationshipKind cho từng contact trong page.
+      // Aggregate Friend rows theo relationshipKind cho từng contact (gồm CON nếu là Cha).
       // Hiển thị 4 chip nick chăm (friend / pending_friend / chatting_stranger / ghost).
-      const contactIds = contacts.map((c) => c.id);
-      const friendCounts = contactIds.length === 0 ? [] : await prisma.friend.groupBy({
+      const allContactIds = new Set<string>();
+      const childrenByParent = new Map<string, string[]>();
+      for (const c of contacts) {
+        allContactIds.add(c.id);
+        const kidIds = (c.children ?? []).map((k) => k.id);
+        childrenByParent.set(c.id, kidIds);
+        kidIds.forEach((id) => allContactIds.add(id));
+      }
+      const friendCounts = allContactIds.size === 0 ? [] : await prisma.friend.groupBy({
         by: ['contactId', 'relationshipKind'],
-        where: { contactId: { in: contactIds } },
+        where: { contactId: { in: Array.from(allContactIds) } },
         _count: { _all: true },
       });
-      const nicksByKindMap = new Map<string, Record<string, number>>();
+      const perContactKind = new Map<string, Record<string, number>>();
       for (const row of friendCounts) {
-        const map = nicksByKindMap.get(row.contactId) || {};
+        const map = perContactKind.get(row.contactId) || {};
         map[row.relationshipKind] = row._count._all;
-        nicksByKindMap.set(row.contactId, map);
+        perContactKind.set(row.contactId, map);
       }
-      const contactsWithNicks = contacts.map((c) => ({
-        ...c,
-        nicksByKind: nicksByKindMap.get(c.id) || {},
-      }));
+      // Aggregate: cha gom counts từ chính cha + tất cả con
+      const enriched = contacts.map((c) => {
+        const ids = [c.id, ...(childrenByParent.get(c.id) || [])];
+        const merged: Record<string, number> = {};
+        for (const id of ids) {
+          const m = perContactKind.get(id) || {};
+          for (const [k, v] of Object.entries(m)) merged[k] = (merged[k] || 0) + v;
+        }
+        const display = computeAggregateDisplay(c);
+        return { ...c, nicksByKind: merged, ...display };
+      });
 
-      return { contacts: contactsWithNicks, total, page: pageNum, limit: limitNum };
+      return { contacts: enriched, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] List error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contacts' });
@@ -447,6 +467,95 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Backfill globalId error:', err);
       return reply.status(500).send({ error: 'Backfill failed', detail: String(err) });
+    }
+  });
+
+  // ── POST /api/v1/contacts/:id/link-parent — gắn 1 Contact (son) vào 1 Contact khác (father) ──
+  app.post('/api/v1/contacts/:id/link-parent', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const { parentContactId } = (request.body || {}) as { parentContactId?: string };
+      if (!parentContactId) return reply.status(400).send({ error: 'parentContactId required' });
+      if (parentContactId === id) return reply.status(400).send({ error: 'Cannot link contact to itself' });
+
+      // Cha + con phải cùng org
+      const [child, parent] = await Promise.all([
+        prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true, mergedInto: true, children: { select: { id: true } } } }),
+        prisma.contact.findFirst({ where: { id: parentContactId, orgId: user.orgId }, select: { id: true, parentContactId: true, mergedInto: true } }),
+      ]);
+      if (!child) return reply.status(404).send({ error: 'Child contact not found' });
+      if (!parent) return reply.status(404).send({ error: 'Parent contact not found' });
+      if (child.mergedInto) return reply.status(400).send({ error: 'Child already hard-merged via globalId' });
+      if (parent.mergedInto) return reply.status(400).send({ error: 'Parent already hard-merged via globalId' });
+      // Block 3-level hierarchy: parent phải là root (parentContactId=NULL)
+      if (parent.parentContactId) return reply.status(400).send({ error: 'Parent must itself be a root contact (no parent)' });
+      // Block cycle: nếu child đang có children, không cho biến nó thành con
+      if (child.children.length > 0) return reply.status(400).send({ error: 'This contact has children — split them out first before linking as child' });
+
+      const updated = await prisma.contact.update({
+        where: { id },
+        data: { parentContactId },
+      });
+      // Audit
+      await prisma.activityLog.create({
+        data: {
+          orgId: user.orgId,
+          userId: user.id,
+          action: 'contact_link_parent',
+          entityType: 'contact',
+          entityId: id,
+          details: { parentContactId },
+        },
+      });
+      return reply.send(updated);
+    } catch (err) {
+      logger.error('[contacts] link-parent error:', err);
+      return reply.status(500).send({ error: 'Failed to link parent' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/:id/unlink-parent — tách Contact thành KH Cha riêng ─
+  app.post('/api/v1/contacts/:id/unlink-parent', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const contact = await prisma.contact.findFirst({
+        where: { id, orgId: user.orgId },
+        select: { id: true, parentContactId: true },
+      });
+      if (!contact) return reply.status(404).send({ error: 'Contact not found' });
+      if (!contact.parentContactId) return reply.status(400).send({ error: 'Contact already a root (no parent)' });
+
+      const updated = await prisma.contact.update({
+        where: { id },
+        data: { parentContactId: null },
+      });
+      await prisma.activityLog.create({
+        data: {
+          orgId: user.orgId,
+          userId: user.id,
+          action: 'contact_unlink_parent',
+          entityType: 'contact',
+          entityId: id,
+          details: { previousParentId: contact.parentContactId },
+        },
+      });
+      return reply.send(updated);
+    } catch (err) {
+      logger.error('[contacts] unlink-parent error:', err);
+      return reply.status(500).send({ error: 'Failed to unlink parent' });
+    }
+  });
+
+  // ── POST /api/v1/admin/migrate-status-table — one-off seed + convert enum ────
+  app.post('/api/v1/admin/migrate-status-table', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await migrateStatusTable();
+      return reply.send(result);
+    } catch (err) {
+      logger.error('[contacts] migrate-status-table error:', err);
+      return reply.status(500).send({ error: 'Migration failed', detail: String(err) });
     }
   });
 
