@@ -3,7 +3,9 @@
     <!-- ════════ TOP NAV (Smax-style dark, h=52px) ════════ -->
     <header class="smax-topnav">
       <!-- Logo + Workspace selector -->
-      <RouterLink to="/" class="logo" title="ZaloCRM">S</RouterLink>
+      <RouterLink to="/" class="logo" title="ZaloCRM">
+        <img src="/brand/zalocrm-logo.png" alt="ZaloCRM" />
+      </RouterLink>
 
       <v-menu open-on-hover>
         <template #activator="{ props: act }">
@@ -196,12 +198,16 @@ function logout() {
 
 .logo {
   width: 35px; height: 35px;
-  background: white; color: var(--smax-primary);
-  font-weight: 700; border-radius: 7px;
+  background: white; border-radius: 7px;
   display: flex; align-items: center; justify-content: center;
   margin-right: 4px;
-  font-size: 16px;
   text-decoration: none;
+  overflow: hidden;
+  padding: 2px;
+}
+.logo img {
+  width: 100%; height: 100%;
+  object-fit: contain;
 }
 
 .workspace {
