@@ -467,18 +467,43 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.duplicateGroup.count({ where }),
       ]);
 
-      // Expand contact data for each group
+      // Expand contact data for each group. Sort theo "richness" — KH có nhiều
+      // data hơn (friends, convs, fullName, phone, globalId) đứng TRƯỚC làm
+      // primary đề xuất. Tie-break: createdAt cũ hơn lên trước.
       const expanded = await Promise.all(
         groups.map(async (group) => {
           const contacts = await prisma.contact.findMany({
             where: { id: { in: group.contactIds } },
             select: {
-              id: true, fullName: true, phone: true, email: true,
-              zaloUid: true, avatarUrl: true, source: true, status: true,
+              id: true, fullName: true, crmName: true, phone: true, email: true,
+              zaloUid: true, zaloGlobalId: true, zaloUsername: true,
+              avatarUrl: true, source: true, status: true,
               tags: true, createdAt: true, leadScore: true, lastActivity: true,
+              hasZalo: true, lastInboundAt: true, lastOutboundAt: true,
+              totalInbound: true, totalOutbound: true,
+              assignedUser: { select: { id: true, fullName: true } },
+              statusRef: { select: { id: true, name: true, color: true } },
+              _count: { select: { conversations: true, appointments: true, friends: true } },
             },
           });
-          return { ...group, contacts };
+          // Compute richness score — số field có data + bonus cho friends/convs/apts.
+          const scored = contacts.map(c => {
+            const richness =
+              (c.fullName ? 1 : 0) + (c.crmName ? 1 : 0) + (c.phone ? 1 : 0) +
+              (c.email ? 1 : 0) + (c.zaloUid ? 1 : 0) + (c.zaloGlobalId ? 1 : 0) +
+              (c.zaloUsername ? 1 : 0) + (c.avatarUrl ? 1 : 0) +
+              (c._count.friends || 0) * 3 +
+              (c._count.conversations || 0) * 2 +
+              (c._count.appointments || 0) * 2 +
+              (Array.isArray(c.tags) && c.tags.length > 0 ? 1 : 0);
+            return { ...c, _richness: richness };
+          });
+          // Sort: richness DESC, then createdAt ASC (older first)
+          scored.sort((a, b) => {
+            if (a._richness !== b._richness) return b._richness - a._richness;
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          });
+          return { ...group, contacts: scored };
         }),
       );
 
