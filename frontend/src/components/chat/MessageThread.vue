@@ -534,8 +534,11 @@ const headerName = computed(() => {
       || props.conversation?.contact?.fullName
       || 'Nhóm Zalo';
   }
-  const c = props.conversation?.contact;
-  return c?.crmName || c?.fullName || 'Unknown';
+  // Ưu tiên Tên gợi nhớ Zalo (Friend.aliasInNick) — sync 2-way với Zalo Real.
+  // UI khớp với Zalo Real để sale nhận diện KH bằng cùng 1 tên.
+  return props.conversation?.friendship?.aliasInNick
+    || props.conversation?.contact?.fullName
+    || 'Unknown';
 });
 const headerAvatarSrc = computed(() => {
   if (props.conversation?.threadType === 'group') {

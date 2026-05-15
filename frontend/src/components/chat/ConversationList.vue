@@ -280,7 +280,9 @@ function displayName(conv: Conversation): string {
       || conv.contact?.fullName
       || 'Nhóm Zalo';
   }
-  return conv.contact?.crmName || conv.contact?.fullName || 'Unknown';
+  // Ưu tiên Tên gợi nhớ Zalo (Friend.aliasInNick) — sync 2-way với Zalo Real.
+  // Fallback fullName (tên Zalo gốc). KHÔNG dùng Contact.crmName để UI khớp Zalo Real.
+  return conv.friendship?.aliasInNick || conv.contact?.fullName || 'Unknown';
 }
 function avatarSrcOf(conv: Conversation): string | null {
   if (conv.threadType === 'group') {

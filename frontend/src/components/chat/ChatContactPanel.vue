@@ -103,8 +103,14 @@
           <template v-if="infoExpanded">
             <div class="ip-form-row">
               <span class="ip-icon">✏</span>
-              <span class="ip-label">Tên Alias</span>
-              <input v-model="form.crmName" placeholder="Sale tự đặt" @blur="saveContact" />
+              <span class="ip-label" title="Tên gợi nhớ Zalo per-pair — sync 2-way với Zalo Real">Tên gợi nhớ</span>
+              <input
+                :value="aliasDraft"
+                placeholder="Sync với Zalo Real"
+                @input="aliasDraft = ($event.target as HTMLInputElement).value"
+                @blur="saveAlias"
+                @keydown.enter.prevent="saveAlias"
+              />
             </div>
             <div class="ip-form-row">
               <span class="ip-icon">📅</span>
@@ -349,6 +355,8 @@ const props = defineProps<{
   contact: Contact | null;
   // Nick CRM đang xem KH này — dùng để xác định Friend row "active" cho per-pair tag.
   activeZaloAccountId?: string | null;
+  // Friendship per-pair (nick × KH) — chứa aliasInNick để sync 2-way với Zalo Real.
+  friendship?: { id?: string; aliasInNick?: string | null } | null;
   aiSummary: string;
   aiSummaryLoading: boolean;
   aiSentiment: AiSentiment | null;
@@ -371,6 +379,31 @@ const {
   () => props.contact,
   () => emit('saved'),
 );
+
+// ════════ Tên gợi nhớ Zalo (per-pair, sync 2-way với Zalo Real) ════════
+// Bound to Friend.aliasInNick — PATCH /friends/:id sẽ:
+//   1. Update DB
+//   2. Fire-and-forget call api.changeFriendAlias / removeFriendAlias → push Zalo Real
+const aliasDraft = ref('');
+watch(() => props.friendship?.aliasInNick, (v) => {
+  aliasDraft.value = v || '';
+}, { immediate: true });
+
+const aliasToast = useToast();
+async function saveAlias() {
+  const friendId = props.friendship?.id;
+  if (!friendId) return;
+  const trimmed = aliasDraft.value.trim();
+  const newAlias = trimmed.length ? trimmed : null;
+  if (newAlias === (props.friendship?.aliasInNick || null)) return;  // no-op
+  try {
+    await api.patch(`/friends/${friendId}`, { aliasInNick: newAlias });
+    aliasToast.success(newAlias ? `Đã đổi tên gợi nhớ → "${newAlias}"` : 'Đã xoá tên gợi nhớ');
+    emit('saved');  // parent refetch để lấy alias mới + reflect lên cột 2 + header
+  } catch (err) {
+    aliasToast.error('Lưu tên gợi nhớ thất bại');
+  }
+}
 
 // ════════ Tab state (persist sang tab khác KH khác) ════════
 const activeTab = ref<'profile' | 'relations' | 'activity'>('profile');
