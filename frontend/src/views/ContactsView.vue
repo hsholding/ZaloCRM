@@ -337,9 +337,9 @@
                     <thead>
                       <tr>
                         <th>Nick Zalo (Sale)</th>
-                        <th>Tên CRM/Nick KH</th>
                         <th>Ảnh KH</th>
                         <th>Tên Zalo + UID</th>
+                        <th>Tên gợi nhớ</th>
                         <th v-if="visibleChildCols.zaloGlobalId" title="Zalo globalId per identity (toàn cục)">Global ID</th>
                         <th v-if="visibleChildCols.zaloUsername" title="Zalo username (handle)">Username</th>
                         <th>Trạng thái KB</th>
@@ -369,15 +369,6 @@
                           </div>
                         </td>
                         <td>
-                          <input
-                            class="alias-input"
-                            :value="row.aliasInNick || ''"
-                            placeholder="— Tên gợi nhớ —"
-                            :title="'Sync 2-chiều với Zalo Real. Đổi ở đây → push qua Zalo của Sale.'"
-                            @change="onFriendAliasChange(row, ($event.target as HTMLInputElement).value)"
-                          />
-                        </td>
-                        <td>
                           <Avatar :src="row.zaloAvatarUrl || contact.avatarUrl" :name="row.zaloName || contact.fullName || '?'" :size="32" :gradient-seed="row.id" />
                         </td>
                         <td>
@@ -385,6 +376,15 @@
                             <span class="line1">{{ row.zaloName || '—' }}</span>
                             <span class="uid">{{ row.zaloUid || 'chưa lấy' }}</span>
                           </div>
+                        </td>
+                        <td>
+                          <input
+                            class="alias-input"
+                            :value="row.aliasInNick || ''"
+                            placeholder="— Tên gợi nhớ —"
+                            :title="'Sync 2-chiều với Zalo Real. Đổi ở đây → push qua Zalo của Sale.'"
+                            @change="onFriendAliasChange(row, ($event.target as HTMLInputElement).value)"
+                          />
                         </td>
                         <td v-if="visibleChildCols.zaloGlobalId">
                           <code v-if="row.zaloGlobalId" class="uid-cell" :title="row.zaloGlobalId">{{ row.zaloGlobalId.slice(0, 10) }}…</code>
