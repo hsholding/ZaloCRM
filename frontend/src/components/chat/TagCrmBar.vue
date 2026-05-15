@@ -3,19 +3,21 @@
     <!-- Label prefix -->
     <span class="bar-label">🏷</span>
 
-    <!-- Assigned pills — Zalo-managed FIRST (theo managedBy), sau đó CrmTag.order -->
+    <!-- Assigned pills — Zalo-managed FIRST (theo managedBy), sau đó CrmTag.order.
+         Zalo-managed: monochromatic chip (icon + bg + border + text cùng tone từ ZaloLabel.color
+         qua color-mix). CRM tag: chip gray neutral hoặc tinted theo CrmTag.color. -->
     <span
       v-for="tag in sortedTags"
       :key="tag"
       class="tag-pill"
-      :class="{ 'zalo-managed': isZaloManaged(tag) }"
-      :style="tagStyle(tag) || `border-color: ${defaultHue}; color: ${defaultHue}`"
+      :class="{ 'tag-zalo': isZaloManaged(tag), 'tag-crm': !isZaloManaged(tag) }"
+      :style="{ '--tag-color': tagColor(tag) }"
       :title="isZaloManaged(tag)
         ? `Tag Zalo Real — đổi/gỡ trên app Zalo, hệ thống tự cập nhật. ${findDef(tag)?.description || ''}`
         : (findDef(tag)?.description || 'Click × để xoá')"
     >
-      <span v-if="isZaloManaged(tag)" class="tag-lock" title="Read-only — sync từ Zalo">🔒</span>
-      <span v-else-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ tag }}
+      <TagIcon v-if="isZaloManaged(tag)" :size="13" />
+      <span v-else-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ cleanTagName(tag) }}
       <button
         v-if="!isZaloManaged(tag)"
         class="tag-x"
@@ -95,6 +97,8 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
+import TagIcon from '@/components/icons/TagIcon.vue';
+import { tagColor as lookupTagColor, cleanTagName, refreshTagDefs } from '@/composables/use-crm-tag-defs';
 
 interface CrmTagDef {
   id: string;
@@ -165,13 +169,10 @@ function findDef(name: string): CrmTagDef | null {
   return tagDefs.value.find(d => d.name === name) || null;
 }
 
-function tagStyle(name: string): string | null {
-  const def = findDef(name);
-  if (!def) return null;
-  return `background: ${def.color}15; color: ${def.color}; border-color: ${def.color}`;
+function tagColor(name: string): string {
+  // Ưu tiên CrmTag.color local, fallback shared composable (Zalo-mirror, color cache)
+  return findDef(name)?.color || lookupTagColor(name);
 }
-
-const defaultHue = '#546E7A';
 
 // Dropdown state
 const dropdownOpen = ref(false);
@@ -257,6 +258,8 @@ async function persist(next: string[]) {
   try {
     // Backend dùng PUT /contacts/:id/tags (endpoint chuyên cho tags), KHÔNG phải PATCH.
     await api.put(`/contacts/${props.contactId}/tags`, { tags: next });
+    // Trigger timeline refresh + highlight entry "tag_*_crm" mới
+    window.dispatchEvent(new CustomEvent('timeline-updated', { detail: { contactId: props.contactId } }));
   } catch (err: any) {
     const msg = err?.response?.data?.error || `Lưu tag thất bại (${err?.response?.status || 'network'})`;
     toast.error(msg);
@@ -302,7 +305,7 @@ onMounted(() => { void loadTagDefs(); });
 .tag-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   padding: 3px 10px;
   border-radius: 12px;
   font-size: 12px;
@@ -314,14 +317,27 @@ onMounted(() => { void loadTagDefs(); });
   transition: filter 0.12s;
 }
 .tag-pill:hover { filter: brightness(0.96); }
-.tag-pill.zalo-managed {
-  padding: 3px 10px;          /* không có nút X → padding đều 2 bên */
+
+/* Zalo-managed: monochromatic chip dùng color-mix() derive 3 màu phụ từ --tag-color.
+ * Hỗ trợ Chrome 111+, Safari 16.2+, Firefox 113+ — modern browsers OK cho CRM nội bộ. */
+.tag-pill.tag-zalo {
+  --tag-color: #0068FF;
+  background: color-mix(in srgb, var(--tag-color) 12%, white);
+  border-color: color-mix(in srgb, var(--tag-color) 80%, white);
+  color: color-mix(in srgb, var(--tag-color) 75%, black);
+  padding: 3px 10px;
   cursor: help;
 }
-.tag-lock {
-  font-size: 10px;
-  margin-right: 1px;
-  opacity: 0.7;
+.tag-pill.tag-zalo :deep(.tag-icon) {
+  color: var(--tag-color);
+}
+
+/* CRM tag: dùng CrmTag.color qua --tag-color, render tinted chip nhẹ. */
+.tag-pill.tag-crm {
+  --tag-color: #546E7A;
+  background: color-mix(in srgb, var(--tag-color) 8%, white);
+  border-color: color-mix(in srgb, var(--tag-color) 70%, white);
+  color: color-mix(in srgb, var(--tag-color) 80%, black);
 }
 .tag-x {
   background: none;

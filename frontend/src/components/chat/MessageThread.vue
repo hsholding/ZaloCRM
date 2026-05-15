@@ -711,6 +711,9 @@ async function onPickLabel(label: AccountLabelView) {
     // Reconcile với BE — fetch fresh + dispatch event để các surface khác re-fetch
     void fetchAllLabels(accId, threadId);
     window.dispatchEvent(new CustomEvent('zalo-labels-synced', { detail: { accountId: accId } }));
+    // Trigger timeline refresh + highlight entry "tag_change_zalo" mới
+    const contactId = props.conversation?.contact?.id;
+    if (contactId) window.dispatchEvent(new CustomEvent('timeline-updated', { detail: { contactId } }));
   } catch (err: any) {
     // Rollback BOTH optimistic mutations + clear pending
     allLabels.value = snapshotAllLabels;
@@ -943,6 +946,8 @@ async function onCareStatusChange(value: string) {
     const { api: apiClient } = await import('@/api/index');
     // Backend dùng PUT /contacts/:id (full update), KHÔNG có PATCH.
     await apiClient.put(`/contacts/${contactId}`, { status: value });
+    // Trigger timeline refresh + highlight entry "status_change" mới
+    window.dispatchEvent(new CustomEvent('timeline-updated', { detail: { contactId } }));
     // Undo toast 5s — click "Hoàn tác" → revert về status cũ
     toast.undo(`Đã đổi trạng thái → ${value}`, async () => {
       try {

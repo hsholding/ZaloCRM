@@ -86,6 +86,7 @@
         <article
           v-if="item.type === 'note'"
           class="note-card"
+          :class="{ 'is-new': newItemIds.has(getItemKey(item)) }"
           :data-note-id="(item.data as Note).id"
         >
           <NoteRow
@@ -157,6 +158,7 @@
         <ActivityItem
           v-else
           :item="item.data as ActivityLogItem"
+          :class="{ 'is-new': newItemIds.has(getItemKey(item)) }"
         />
       </template>
 
@@ -182,8 +184,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue';
-import { useTimeline, type ActivityLogItem } from '@/composables/use-timeline';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { useTimeline, type ActivityLogItem, type TimelineItem } from '@/composables/use-timeline';
 import { useNotes, type Note, type ParsedAppointment } from '@/composables/use-notes';
 import { useUserPreferences } from '@/composables/use-user-preferences';
 import { useAuthStore } from '@/stores/auth';
@@ -265,6 +267,46 @@ function setFilter(v: 'all' | 'notes' | 'activity') {
   filter.value = v;
   void timeline.refresh(effectiveCategories.value);
 }
+
+/* ── Realtime update ──────────────────────────────────────────────────
+ * Listener cho `timeline-updated` custom event (dispatch từ MessageThread
+ * sau khi đổi status/tag, TagCrmBar sau khi update tag CRM, ...).
+ * Refresh timeline + highlight entry mới với animation pulse 2.5s. */
+const newItemIds = ref(new Set<string>());
+
+function getItemKey(item: TimelineItem): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return `${item.type}:${(item.data as any).id}`;
+}
+
+async function refreshWithHighlight() {
+  const oldIds = new Set(items.value.map(getItemKey));
+  await timeline.refresh(effectiveCategories.value);
+  // Find items in new that weren't in old → highlight
+  const fresh = items.value.filter(i => !oldIds.has(getItemKey(i)));
+  if (fresh.length === 0) return;
+  const freshKeys = fresh.map(getItemKey);
+  for (const key of freshKeys) newItemIds.value.add(key);
+  // Tự clear class is-new sau 2.5s để animation chỉ chạy 1 lần
+  setTimeout(() => {
+    for (const key of freshKeys) newItemIds.value.delete(key);
+  }, 2500);
+}
+
+function onTimelineUpdated(ev: Event) {
+  const customEv = ev as CustomEvent<{ contactId?: string }>;
+  // Match contactId — chỉ refresh nếu event này thuộc KH đang xem
+  if (customEv.detail?.contactId && customEv.detail.contactId !== props.contactId) return;
+  if (!props.contactId) return;
+  void refreshWithHighlight();
+}
+
+onMounted(() => {
+  window.addEventListener('timeline-updated', onTimelineUpdated);
+});
+onUnmounted(() => {
+  window.removeEventListener('timeline-updated', onTimelineUpdated);
+});
 
 function toggleCategory(cat: ActivityCategory) {
   const set = new Set(visibleCategories.value);
@@ -451,6 +493,18 @@ defineExpose({ rootCount: rootNoteCount });
   flex-direction: column;
   min-height: 0;
   gap: 6px;
+}
+
+/* Realtime highlight: entry mới (do refresh từ timeline-updated event)
+ * → glow vàng pulse 2.5s rồi fade out. Animation chạy 1 lần khi mount. */
+@keyframes timeline-entry-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.55); background: rgba(251, 191, 36, 0.08); }
+  60%  { box-shadow: 0 0 0 6px rgba(251, 191, 36, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); background: transparent; }
+}
+.is-new {
+  animation: timeline-entry-pulse 2.5s ease-out;
+  border-radius: 8px;
 }
 
 .tl-header {
