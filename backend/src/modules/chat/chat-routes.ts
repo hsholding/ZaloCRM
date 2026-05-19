@@ -333,6 +333,11 @@ export async function chatRoutes(app: FastifyInstance) {
       becameFriendAt: Date | null; firstMessageAt: Date | null;
       crmTagsPerNick: unknown;
       aliasInNick: string | null;        // ui-phase5: "Tên gợi nhớ" Zalo sync 2-way
+      // Per-pair counter (FE header cột 3 đọc — fix bug 235/198 revert 0/0)
+      totalInbound: number;
+      totalOutbound: number;
+      lastInboundAt: Date | null;
+      lastOutboundAt: Date | null;
       // Phase 6+ score + auto-tag display
       leadScore: number;
       autoTags: unknown;
@@ -350,6 +355,16 @@ export async function chatRoutes(app: FastifyInstance) {
           becameFriendAt: true, firstMessageAt: true,
           crmTagsPerNick: true,                // per-pair CRM tags (kèm Zalo-mirrored "🔵 X")
           aliasInNick: true,                   // "Tên gợi nhớ" Zalo, sync 2-way (ui-phase5)
+          // ── Per-pair counter ─────────────────────────────────────────────
+          // KHÔNG include trước đây gây bug: header MessageThread cột 3 đọc
+          // friendship.totalInbound/Outbound → list refresh override conv →
+          // counter rớt về 0/0 (vì ?? 0 fallback). Detail endpoint /:id có,
+          // list endpoint thiếu → race khi fetchConversations() chạy sau
+          // selectConversation. Fix: select + map ra response cho stable.
+          totalInbound: true,
+          totalOutbound: true,
+          lastInboundAt: true,
+          lastOutboundAt: true,
           // Phase 6+ — Score + auto-tags + stuck cho render badge trong conv list
           leadScore: true,
           autoTags: true,
@@ -366,6 +381,11 @@ export async function chatRoutes(app: FastifyInstance) {
         firstMessageAt: f.firstMessageAt,
         crmTagsPerNick: f.crmTagsPerNick,
         aliasInNick: f.aliasInNick,          // ui-phase5
+        // Per-pair counter — header chat cột 3 dùng (fix bug 235/198 → 0/0)
+        totalInbound: f.totalInbound,
+        totalOutbound: f.totalOutbound,
+        lastInboundAt: f.lastInboundAt,
+        lastOutboundAt: f.lastOutboundAt,
         // Phase 6+ score + auto-tag display data
         leadScore: f.leadScore,
         autoTags: f.autoTags,
