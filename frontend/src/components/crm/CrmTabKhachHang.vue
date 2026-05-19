@@ -21,7 +21,7 @@
         </tr>
       </thead>
       <tbody>
-        <template v-for="(c, i) in contacts" :key="c.id">
+        <template v-for="c in contacts" :key="c.id">
           <tr :class="{ selected: selected.has(c.id), expanded: expandedIds.has(c.id) }" @click="onRowClick(c, $event)">
             <td class="cb-col" @click.stop>
               <input type="checkbox" :checked="selected.has(c.id)" @change="onToggleRow(c.id)" />

@@ -9,7 +9,7 @@
  *
  * Column định nghĩa ở /constants/crm-columns.ts (single source of truth).
  */
-import { ref, reactive, watch, computed } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { COLS_KH, COLS_BB } from '@/constants/crm-columns';
 
 const STORAGE_KEY = 'zalocrm.crm.state.v3';
