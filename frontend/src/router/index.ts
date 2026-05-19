@@ -33,6 +33,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/crm',
+    name: 'Crm',
+    component: () => import('@/views/CrmView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/zalo-accounts',
     name: 'ZaloAccounts',
     component: () => import('@/views/ZaloAccountsView.vue'),
