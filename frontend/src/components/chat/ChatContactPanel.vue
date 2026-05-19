@@ -102,11 +102,16 @@
             </div>
           </div>
 
-          <!-- Expand toggle — 3 states: hidden | auto (timer) | sticky (no timer) -->
+          <!--
+            Toggle 1 nút, 3-state cycle:
+              hidden → click → auto (countdown 5s)
+              auto → click → sticky (ghim 📌, cancel countdown)
+              sticky → click → hidden
+          -->
           <button class="info-expand-toggle" :class="{ 'is-sticky': isSticky }" @click="toggleInfoExpand">
             <span v-if="!infoExpanded">▾ Xem đầy đủ</span>
-            <span v-else-if="isSticky">▴ Thu gọn <span class="sticky-badge" title="Ghim mở — KHÔNG tự thu">📌</span></span>
-            <span v-else>▴ Thu gọn (tự thu sau {{ collapseRemain }}s)</span>
+            <span v-else-if="isSticky">▴ Thu gọn <span class="sticky-badge" title="Đã ghim — không tự thu">📌</span></span>
+            <span v-else>📌 Ghim mở (tự thu sau {{ collapseRemain }}s)</span>
           </button>
 
           <!-- Expanded fields -->
@@ -440,16 +445,20 @@ async function saveAlias() {
 const activeTab = ref<'profile' | 'relations' | 'activity' | 'score'>('profile');
 
 // ════════════════════════════════════════════════════════════════════════
-// Info section state machine — 3 modes:
-//   'auto'   → vừa load conv / vừa click tab Hồ Sơ, expand + countdown 5s
-//   'sticky' → user click expand thủ công, KHÔNG auto-hide
-//   'hidden' → ẩn (default sau countdown hoặc user click hide)
+// Info section state machine — 3 modes, in-memory only (KHÔNG persist):
+//   'auto'   → expand + countdown 5s → auto-hide
+//   'sticky' → user click 2nd time để ghim → KHÔNG auto-hide
+//   'hidden' → ẩn (mặc định, hoặc sau countdown, hoặc user thu gọn)
 //
-// localStorage preference: sau khi user 1 lần set sticky, lần sau load conv
-// mặc định sticky (skip auto-collapse) để khỏi phiền user power.
+// Flow toggle button (1 nút, 3-state cycle):
+//   hidden → click → 'auto' (5s countdown)
+//   'auto' (đang countdown) → click → 'sticky' (cancel countdown, ghim 📌)
+//   'sticky' → click → 'hidden'
+//
+// Reload page / switch conv / switch tab → RESET về hidden (KHÔNG persist).
+// Sticky chỉ giữ trong cùng conv + cùng tab Hồ Sơ.
 // ════════════════════════════════════════════════════════════════════════
 type ExpandMode = 'auto' | 'sticky' | 'hidden';
-const STICKY_PREF_KEY = 'chat-contact-panel-sticky-default';
 const expandMode = ref<ExpandMode>('hidden');
 const infoExpanded = computed(() => expandMode.value !== 'hidden');
 const isSticky = computed(() => expandMode.value === 'sticky');
@@ -472,41 +481,32 @@ function startAutoCollapse() {
   }, 1000);
 }
 
-// User click nút expand: upgrade auto → sticky (clear timeout, không bao giờ tự ẩn nữa).
-// Từ hidden → sticky (mở thủ công cũng = sticky, vì là intent rõ ràng).
+// 3-state cycle trên 1 nút toggle (theo user spec):
+//   hidden → 'auto' (countdown 5s)
+//   'auto' → 'sticky' (ghim, cancel countdown)
+//   'sticky' → 'hidden'
 function toggleInfoExpand() {
   if (expandMode.value === 'hidden') {
-    // User mở thủ công → sticky luôn
+    // Open lần đầu → auto countdown 5s
+    expandMode.value = 'auto';
+    startAutoCollapse();
+  } else if (expandMode.value === 'auto') {
+    // Click lần nữa khi đang auto → ghim sticky (cancel countdown)
     expandMode.value = 'sticky';
     clearCollapseTimer();
-    saveStickyPreference(true);
   } else {
-    // Đang auto hoặc sticky → user click = thu gọn
+    // sticky → hidden
     expandMode.value = 'hidden';
     clearCollapseTimer();
-    saveStickyPreference(false);
   }
 }
 
-function saveStickyPreference(prefer: boolean) {
-  try { localStorage.setItem(STICKY_PREF_KEY, prefer ? '1' : '0'); } catch { /* ignore */ }
-}
-function loadStickyPreference(): boolean {
-  try { return localStorage.getItem(STICKY_PREF_KEY) === '1'; } catch { return false; }
-}
-
-// Khi click tab Hồ Sơ:
-//   - Nếu user trước đó đã set sticky → mở sticky (không countdown)
-//   - Còn lại → mở auto + countdown 5s
+// Khi click tab Hồ Sơ: auto-expand + countdown (KHÔNG sticky default).
+// Khi switch tab khác: hidden.
 watch(activeTab, (tab) => {
   if (tab === 'profile') {
-    if (loadStickyPreference()) {
-      expandMode.value = 'sticky';
-      clearCollapseTimer();
-    } else {
-      expandMode.value = 'auto';
-      startAutoCollapse();
-    }
+    expandMode.value = 'auto';
+    startAutoCollapse();
   } else {
     clearCollapseTimer();
     expandMode.value = 'hidden';
@@ -726,14 +726,10 @@ const router = useRouter();
 // watch(activeTab) sẽ KHÔNG fire khi cùng giá trị → form section stuck ở state cũ.
 watch(() => props.contactId, (id) => {
   activeTab.value = 'profile';
-  // State machine: nếu user trước đó set sticky → mở sticky luôn, không countdown
-  if (loadStickyPreference()) {
-    expandMode.value = 'sticky';
-    clearCollapseTimer();
-  } else {
-    expandMode.value = 'auto';
-    startAutoCollapse();
-  }
+  // Switch conv hoặc reload page → reset về 'auto' (countdown 5s).
+  // KHÔNG persist sticky giữa các conv (theo spec: sticky chỉ trong cùng conv).
+  expandMode.value = 'auto';
+  startAutoCollapse();
   if (id) void fetchRelations(id);
   else relations.value = { friends: [] };
 }, { immediate: true });
