@@ -34,7 +34,7 @@
               >{{ expandedIds.has(c.id) ? '▼' : '▶' }}</button>
             </td>
             <td v-for="col in visibleCols" :key="col.key" :class="`col-${col.key}`">
-              <component :is="renderCell(c, col.key)" />
+              <Cell :record="c" :col-key="col.key" />
             </td>
             <td class="action-col" @click.stop>
               <div class="row-actions">
@@ -107,6 +107,11 @@ import type { DbFriend } from '@/composables/use-friends';
 import type { OrgUser } from '@/composables/use-users';
 import type { ColPref, DensityMode } from '@/composables/use-crm-state';
 import { COLS_KH } from '@/constants/crm-columns';
+
+// Functional component wrapper — Vue 3 `<component :is="vnode">` không hỗ trợ VNode trực tiếp.
+// Dùng functional component (function nhận props, trả VNode) là cách clean nhất.
+const Cell = (props: { record: Contact; colKey: string }) => renderCell(props.record, props.colKey);
+Cell.props = ['record', 'colKey'];
 
 const props = defineProps<{
   contacts: Contact[];

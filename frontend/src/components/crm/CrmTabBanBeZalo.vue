@@ -30,7 +30,7 @@
             <input type="checkbox" :checked="selected.has(f.id)" @change="onToggleRow(f.id)" />
           </td>
           <td v-for="col in visibleCols" :key="col.key" :class="`col-${col.key}`">
-            <component :is="renderCell(f, col.key)" />
+            <Cell :record="f" :col-key="col.key" />
           </td>
           <td class="action-col" @click.stop>
             <div class="row-actions">
@@ -57,6 +57,10 @@ import { computed, h, type VNode } from 'vue';
 import type { DbFriend } from '@/composables/use-friends';
 import type { ColPref, DensityMode } from '@/composables/use-crm-state';
 import { COLS_BB } from '@/constants/crm-columns';
+
+// Functional component — wrap renderCell() vì `<component :is="vnode">` không support VNode trực tiếp.
+const Cell = (props: { record: DbFriend; colKey: string }) => renderCell(props.record, props.colKey);
+Cell.props = ['record', 'colKey'];
 
 const props = defineProps<{
   friends: DbFriend[];
