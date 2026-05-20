@@ -18,6 +18,7 @@ import { authMiddleware } from '../../auth/auth-middleware.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { parseAndDedup, parseRawText, detectInternalDup } from './list-import-service.js';
 import { kickoffEnrichment } from './list-enrichment-service.js';
+import { buildMessagesFromState, type SystemMessage } from './list-system-messages.js';
 import { randomUUID } from 'node:crypto';
 
 export async function customerListRoutes(app: FastifyInstance): Promise<void> {
@@ -179,7 +180,10 @@ export async function customerListRoutes(app: FastifyInstance): Promise<void> {
         else if (crossListDup.has(line.rowIndex)) dupCross++;
         else if (crmContactDup.has(line.rowIndex)) dupCrm++;
       }
-      const pendingLookup = valid - dupInList; // mỗi entry valid (kể cả dup_cross/crm) sẽ lookup Zalo
+      // Pending lookup = mọi entry valid (kể cả dup_*) vì advisory model — worker
+      // enrich tất cả. dup_in_list cũng tính (số trùng vẫn cần biết có Zalo không
+      // cho Campaign target picker).
+      const pendingLookup = valid;
 
       // Single transaction: create list + insert all entries
       const list = await prisma.$transaction(async (tx) => {
@@ -210,29 +214,50 @@ export async function customerListRoutes(app: FastifyInstance): Promise<void> {
           },
         });
 
-        // entries — use createMany cho perf (no FK validation overhead)
+        // entries — use createMany cho perf (no FK validation overhead).
+        // 2026-05-20: status mới chỉ còn lifecycle 2-state (validated | invalid),
+        // dup_* moved sang dup_*_id fields + systemMessages JSON. Worker enrich
+        // tất cả entries valid (kể cả có dup_*_id).
         const entryRows = lines.map((line) => {
-          let status: string = line.valid ? 'validated' : 'invalid';
+          const status: string = line.valid ? 'validated' : 'invalid';
           let dupInListWithEntryId: string | null = null;
           let dupWithListId: string | null = null;
           let dupWithListEntryId: string | null = null;
           let dupWithContactId: string | null = null;
+          let dupWithListName: string | null = null;
 
           if (line.valid) {
             const internalDupRowIdx = internalDup.get(line.rowIndex);
             if (internalDupRowIdx != null) {
-              status = 'dup_in_list';
-              // Note: dupInListWithEntryId set sau, vì cùng batch chưa có ID
+              // dupInListWithEntryId resolve ở second pass (cùng batch chưa có ID)
             } else if (crossListDup.has(line.rowIndex)) {
-              status = 'dup_cross_list';
               const ref = crossListDup.get(line.rowIndex)!;
               dupWithListId = ref.dupListId;
               dupWithListEntryId = ref.dupEntryId;
             } else if (crmContactDup.has(line.rowIndex)) {
-              status = 'dup_with_crm';
               dupWithContactId = crmContactDup.get(line.rowIndex)!;
             }
           }
+
+          // Build initial system messages từ dedup + invalid state
+          const initialMsgs = buildMessagesFromState({
+            invalidReason: line.invalidReason,
+            dupInListWithEntryId,
+            dupWithListId,
+            dupWithListEntryId,
+            dupWithListName,
+            dupWithContactId,
+          });
+          // Mark internal dup placeholder — sẽ rewrite ở second pass với entryId thực
+          if (line.valid && internalDup.get(line.rowIndex) != null) {
+            initialMsgs.push({
+              type: 'DUP_IN_LIST',
+              text: 'Trùng dòng khác trong tệp này',
+              payload: { rowIndex: internalDup.get(line.rowIndex) },
+            });
+          }
+          const now = new Date().toISOString();
+          const fullMsgs: SystemMessage[] = initialMsgs.map((m) => ({ ...m, ts: now }));
 
           return {
             id: randomUUID(),
@@ -252,6 +277,7 @@ export async function customerListRoutes(app: FastifyInstance): Promise<void> {
             dupWithContactId,
             hasZalo: null,
             multiNickCount: 0,
+            systemMessages: fullMsgs as unknown as object,
           };
         });
 
@@ -396,15 +422,14 @@ export async function customerListRoutes(app: FastifyInstance): Promise<void> {
         });
         if (!list) return reply.status(404).send({ error: 'not_found' });
 
-        // Reset hasZalo=null cho entries CHƯA bị mark dup/skipped/invalid →
-        // worker enrich lại. KHÔNG đụng vào dup_in_list/dup_cross_list/dup_with_crm/
-        // skipped/invalid — chúng KHÔNG cần Zalo lookup (dedup là list-level decision,
-        // KHÔNG phải Zalo presence).
+        // Reset hasZalo=null cho entries valid không phải invalid/skipped → worker
+        // enrich lại. 2026-05-20 advisory model: dup_* entries vẫn được enrich
+        // (dup chỉ là system message, không terminal).
         await prisma.customerListEntry.updateMany({
           where: {
             customerListId: id,
             phoneValid: true,
-            status: { notIn: ['dup_in_list', 'dup_cross_list', 'dup_with_crm', 'skipped', 'invalid'] },
+            status: { notIn: ['skipped', 'invalid'] },
           },
           data: { hasZalo: null, status: 'validated', enrichedAt: null },
         });

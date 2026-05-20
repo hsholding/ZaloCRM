@@ -137,7 +137,7 @@
           @click="setTab('no_zalo')"
           title="Số hợp lệ nhưng chưa rõ có Zalo. Đưa vào Campaign để quét xác minh."
         >
-          <div class="l">Đang chờ CRM</div>
+          <div class="l">Đang chờ Quét</div>
           <div class="v">{{ notScannedSdk.toLocaleString('vi-VN') }}</div>
           <div class="pct">cần Campaign quét xác nhận</div>
         </div>
@@ -168,10 +168,10 @@
         🔒 Đã là khách CRM <span class="count">{{ currentList?.dupWithContactEntries ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'has_zalo' }" @click="setTab('has_zalo')">
-        🟢 Đã có Zalo <span class="count">{{ currentList?.hasZaloEntries ?? 0 }}</span>
+        🟢 Có Zalo <span class="count">{{ currentList?.hasZaloEntries ?? 0 }}</span>
       </button>
-      <button class="subtab" :class="{ active: entryTab === 'no_zalo' }" @click="setTab('no_zalo')" title="Số hợp lệ, chưa rõ có Zalo — cần Campaign quét xác nhận">
-        🟡 Đang chờ CRM <span class="count">{{ notScannedSdk }}</span>
+      <button class="subtab" :class="{ active: entryTab === 'no_zalo' }" @click="setTab('no_zalo')" title="Đã check Friend, chưa rõ có Zalo — cần Campaign quét xác nhận">
+        🔵 Đang chờ Quét <span class="count">{{ notScannedSdk }}</span>
       </button>
     </div>
 
@@ -208,11 +208,11 @@
             <th>Tên KH (file)</th>
             <th>Tên KH (Zalo)</th>
             <th title="Lời mời / tin nhắn riêng cho KH này (chỉ có khi import từ CSV/Excel)">💬 Lời mời riêng</th>
-            <th>Trạng thái</th>
+            <th title="Lifecycle 5 ô: Mới / Đang chờ Quét / Có Zalo / Không có Zalo / Lỗi">🔄 Trạng thái</th>
             <th>Zalo UID</th>
             <th>Nick tìm ra</th>
             <th>Global ID</th>
-            <th title="Thông báo hệ thống — lý do invalid, dup, error">⚙️ Thông báo hệ thống</th>
+            <th title="Stack thông báo hệ thống — trùng, sale loại, số sai cụ thể... (newest top, hover xem full)">📨 Thông báo hệ thống</th>
             <th class="right">Action</th>
           </tr>
         </thead>
@@ -294,9 +294,10 @@
               <template v-else-if="entry.personalNote">{{ entry.personalNote }}</template>
               <span v-else class="muted-italic">(click để thêm)</span>
             </td>
-            <td>
-              <span class="status-pill" :class="statusPillClass(entry)">
-                {{ statusPillLabel(entry) }}
+            <!-- Cột 1: Lifecycle (5 ô cố định) -->
+            <td class="lifecycle-cell">
+              <span class="status-pill" :class="lifecycle(entry).cls">
+                {{ lifecycle(entry).label }}
               </span>
             </td>
             <td class="uid-cell" :class="{ empty: !entry.zaloUid }">
@@ -316,23 +317,38 @@
               <span v-if="entry.zaloGlobalId" class="global-id">{{ entry.zaloGlobalId }}</span>
               <span v-else class="global-id empty">—</span>
             </td>
-            <td>
-              <template v-if="entry.errorMessage">
-                <span class="err-note">{{ entry.errorMessage }}</span>
+            <!-- Cột 2: System Messages (stack, newest top, hover xem full) -->
+            <td class="system-messages-cell">
+              <template v-if="sortedMessages(entry.systemMessages).length === 0">
+                <span class="muted-italic">—</span>
               </template>
-              <template v-else-if="entry.status === 'invalid'">
-                <span class="err-note">{{ entry.invalidReason || '—' }}</span>
+              <template v-else>
+                <div class="msg-stack">
+                  <div
+                    v-for="(msg, idx) in sortedMessages(entry.systemMessages)"
+                    :key="idx"
+                    class="msg-item"
+                    :class="{ 'msg-newest': idx === 0 }"
+                  >
+                    <span class="msg-ico">{{ systemMessageIcon(msg.type) }}</span>
+                    <span class="msg-text">{{ msg.text }}</span>
+                  </div>
+                </div>
+                <div class="msg-tooltip">
+                  <div class="msg-tooltip-title">Lịch sử thông báo ({{ sortedMessages(entry.systemMessages).length }})</div>
+                  <div
+                    v-for="(msg, idx) in sortedMessages(entry.systemMessages)"
+                    :key="idx"
+                    class="msg-tooltip-item"
+                  >
+                    <span class="msg-ico">{{ systemMessageIcon(msg.type) }}</span>
+                    <div class="msg-tooltip-body">
+                      <div>{{ msg.text }}</div>
+                      <div class="msg-tooltip-ts">{{ formatMsgTs(msg.ts) }}</div>
+                    </div>
+                  </div>
+                </div>
               </template>
-              <template v-else-if="entry.status === 'dup_in_list'">
-                <span class="dup-note">Trùng entry trong list này</span>
-              </template>
-              <template v-else-if="entry.status === 'dup_cross_list' && entry.dupWithListName">
-                <span class="dup-note">Trùng tệp "{{ entry.dupWithListName }}"</span>
-              </template>
-              <template v-else-if="entry.status === 'dup_with_crm'">
-                <span class="dup-note">Đã có Contact trong CRM</span>
-              </template>
-              <span v-else class="muted-italic">—</span>
             </td>
             <td class="row-actions" @click.stop>
               <button class="icon-btn" title="Mở Contact" v-if="entry.contactId">
@@ -597,12 +613,12 @@ async function commitEdit() {
   // Toast cảnh báo dup nếu phoneRaw đổi sang số trùng
   if (field === 'phoneRaw' && result.conflictWarn) {
     if (result.entry.status === 'invalid') {
-      flashToast(`⚠️ Số mới không hợp lệ — đã đánh dấu "Số không hợp lệ"`);
-    } else if (result.entry.status === 'dup_in_list') {
+      flashToast(`⚠️ Số mới không hợp lệ — đã đánh dấu "Lỗi"`);
+    } else if (result.entry.dupInListWithEntryId) {
       flashToast(`⚠️ Số mới đã có dòng khác trong tệp này`);
-    } else if (result.entry.status === 'dup_cross_list') {
+    } else if (result.entry.dupWithListId) {
       flashToast(`⚠️ Số mới đã có ở tệp "${result.dupWithListName ?? 'khác'}"`);
-    } else if (result.entry.status === 'dup_with_crm') {
+    } else if (result.entry.dupWithContactId) {
       flashToast(`⚠️ Số mới đã là khách CRM (có Contact)`);
     }
   }
@@ -757,46 +773,53 @@ function dupTotal(l: CustomerListSummary | null): number {
  *   ⏭ Sale loại         — sale bulk-skip
  */
 /**
- * Resolve effective status — defensive: nếu entry có dup_* field set, ưu tiên
- * hiển thị dup pill BẤT KỂ status column. Trước đó có bug worker ghi đè status
- * từ 'dup_cross_list' → 'enriched' nhưng giữ nguyên dup_with_list_id → UI
- * mất pill dup. Logic này protect cả data cũ chưa migrate.
+ * 2-axis status model (chốt 2026-05-20):
+ *   - Lifecycle (5 ô): Mới / Đang chờ Quét / Có Zalo / Không có Zalo / Lỗi
+ *     → đọc từ `status` + `hasZalo`
+ *   - System messages: stack append-only các sự kiện đặc thù (trùng, sale loại,
+ *     số sai format cụ thể, ...) → đọc từ `systemMessages` JSON array
+ *
+ * 2 cột riêng biệt → không còn cartesian explosion + ghi chú có history.
  */
-function effectiveStatus(entry: { status: string; dupWithListId: string | null; dupInListWithEntryId: string | null; dupWithContactId: string | null }): string {
-  if (entry.status === 'invalid' || entry.status === 'skipped') return entry.status;
-  if (entry.dupInListWithEntryId) return 'dup_in_list';
-  if (entry.dupWithListId) return 'dup_cross_list';
-  if (entry.dupWithContactId) return 'dup_with_crm';
-  return entry.status;
+import type { CustomerListEntry as Entry } from '@/composables/use-customer-lists';
+
+function lifecycle(entry: Entry): { code: string; label: string; cls: string } {
+  if (entry.status === 'invalid') return { code: 'INVALID', label: '⚫ Lỗi', cls: 'invalid' };
+  if (entry.hasZalo === true) return { code: 'HAS_ZALO', label: '🟢 Có Zalo', cls: 'has-zalo' };
+  if (entry.hasZalo === false) return { code: 'NO_ZALO', label: '🔴 Không có Zalo', cls: 'no-zalo' };
+  if (entry.status === 'validated') return { code: 'NEW', label: '⏳ Mới', cls: 'new' };
+  // status === 'enriched' + hasZalo=null → đã check Friend xong, chưa rõ Zalo
+  return { code: 'WAITING_SCAN', label: '🔵 Đang chờ Quét', cls: 'waiting' };
 }
 
-function statusPillClass(entry: { status: string; hasZalo: boolean | null; dupWithListId: string | null; dupInListWithEntryId: string | null; dupWithContactId: string | null }): string {
-  const eff = effectiveStatus(entry);
-  if (eff === 'invalid') return 'invalid';
-  if (eff === 'dup_in_list' || eff === 'dup_cross_list') return 'dup';
-  if (eff === 'dup_with_crm') return 'crm';
-  if (eff === 'skipped') return 'skipped';
-  if (entry.hasZalo === true) return 'has-zalo';
-  if (entry.hasZalo === false) return 'no-zalo';
-  if (eff === 'enriched' && entry.hasZalo === null) return 'awaiting';
-  return 'pending';
-}
-
-function statusPillLabel(
-  entry: { status: string; hasZalo: boolean | null; dupWithListId: string | null; dupInListWithEntryId: string | null; dupWithContactId: string | null; dupWithListName?: string | null },
-): string {
-  const eff = effectiveStatus(entry);
-  if (eff === 'invalid') return '⚫ Số không hợp lệ';
-  if (eff === 'dup_in_list') return '🟠 Trùng trong tệp';
-  if (eff === 'dup_cross_list') {
-    return entry.dupWithListName ? `🟠 Đã có ở tệp "${entry.dupWithListName}"` : '🟠 Trùng tệp khác';
+/**
+ * Icon emoji theo message type — dùng để render stack message.
+ */
+function systemMessageIcon(type: string): string {
+  switch (type) {
+    case 'DUP_IN_LIST': return '🟠';
+    case 'DUP_CROSS_LIST': return '🟠';
+    case 'DUP_WITH_CRM': return '🔒';
+    case 'INVALID_FORMAT':
+    case 'INVALID_PREFIX':
+    case 'TOO_SHORT':
+    case 'TOO_LONG':
+    case 'EMPTY': return '📵';
+    case 'SKIPPED_BY_SALE': return '⏭';
+    case 'PHONE_EDITED': return '📝';
+    case 'ENRICHED_NO_MATCH': return '🔍';
+    default: return '•';
   }
-  if (eff === 'dup_with_crm') return '🔒 Đã là khách CRM';
-  if (eff === 'skipped') return '⏭ Sale loại';
-  if (entry.hasZalo === true) return '🟢 Đã có Zalo';
-  if (entry.hasZalo === false) return '🔴 Không có Zalo';
-  if (eff === 'enriched') return '🟡 Đang chờ CRM';
-  return '⏳ Đang quét';
+}
+
+/** Sort newest top */
+function sortedMessages(messages: { ts: string; type: string; text: string }[]): { ts: string; type: string; text: string }[] {
+  return [...(messages ?? [])].sort((a, b) => (b.ts > a.ts ? 1 : b.ts < a.ts ? -1 : 0));
+}
+
+function formatMsgTs(ts: string): string {
+  const d = new Date(ts);
+  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function initials(name: string): string {
@@ -1101,24 +1124,68 @@ function nickAvatarStyle(name: string): Record<string, string> {
   padding: 2px 7px; border-radius: 99px;
   font-size: 10.5px; font-weight: 600; white-space: nowrap;
 }
-/* 🟢 Đã có Zalo */
-.status-pill.has-zalo { background: #D1FAE5; color: #047857; }
-/* 🔴 Không có Zalo (Campaign SDK confirm) */
-.status-pill.no-zalo { background: #FEE2E2; color: #B91C1C; }
-/* ⚫ Số không hợp lệ */
-.status-pill.invalid { background: #E5E7EB; color: #1F2937; }
-/* 🟠 Trùng (in list / cross list) */
-.status-pill.dup { background: #FFEDD5; color: #C2410C; }
-/* 🔒 Đã là khách CRM */
-.status-pill.crm { background: #EDE9FE; color: #6D28D9; }
-/* 🟡 Đang chờ CRM (validated valid, chưa Campaign) */
-.status-pill.awaiting { background: #FEF3C7; color: #B45309; }
-/* ⏳ Đang quét (worker chưa xử lý) */
-.status-pill.pending { background: #F4F5F8; color: #6B7280; }
-/* ⏭ Sale loại */
-.status-pill.skipped { background: #F4F5F8; color: #6B7280; text-decoration: line-through; }
-/* Legacy fallback */
-.status-pill.error { background: #FEE2E2; color: #B91C1C; }
+/* ─── Lifecycle pills (5 ô cố định) ─── */
+.status-pill.new { background: #F4F5F8; color: #6B7280; }                    /* ⏳ Mới */
+.status-pill.waiting { background: #DBEAFE; color: #1D4ED8; }                /* 🔵 Đang chờ Quét */
+.status-pill.has-zalo { background: #D1FAE5; color: #047857; }               /* 🟢 Có Zalo */
+.status-pill.no-zalo { background: #FEE2E2; color: #B91C1C; }                /* 🔴 Không có Zalo */
+.status-pill.invalid { background: #1F2937; color: #fff; }                   /* ⚫ Lỗi */
+
+/* ─── System messages stack cell ─── */
+.system-messages-cell {
+  position: relative;
+  max-width: 240px;
+  vertical-align: top;
+}
+.msg-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 38px; /* ~2 dòng */
+  overflow: hidden;
+  cursor: help;
+}
+.msg-item {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: #6B7280;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.msg-item.msg-newest { color: #111827; font-weight: 500; }
+.msg-ico { font-size: 11px; flex-shrink: 0; }
+.msg-text { overflow: hidden; text-overflow: ellipsis; }
+
+/* Tooltip xem full stack — hover-only */
+.msg-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%; left: 0;
+  z-index: 50;
+  background: #1F2937; color: #F9FAFB;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 240px; max-width: 360px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  margin-top: 4px;
+}
+.system-messages-cell:hover .msg-tooltip { display: block; }
+.msg-tooltip-title {
+  font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .04em;
+  color: #9CA3AF; margin-bottom: 6px;
+}
+.msg-tooltip-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid #374151;
+  font-size: 12px;
+}
+.msg-tooltip-item:last-child { border-bottom: none; }
+.msg-tooltip-body { flex: 1; min-width: 0; }
+.msg-tooltip-ts {
+  font-size: 10.5px; color: #9CA3AF; margin-top: 1px;
+}
+
+.lifecycle-cell { white-space: nowrap; }
 
 .uid-cell {
   font-family: "JetBrains Mono", monospace;

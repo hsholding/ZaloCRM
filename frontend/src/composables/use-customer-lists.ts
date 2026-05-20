@@ -36,6 +36,28 @@ export interface MappedRow {
   personalNote?: string | null;
 }
 
+export type SystemMessageType =
+  | 'DUP_IN_LIST'
+  | 'DUP_CROSS_LIST'
+  | 'DUP_WITH_CRM'
+  | 'INVALID_FORMAT'
+  | 'INVALID_PREFIX'
+  | 'TOO_SHORT'
+  | 'TOO_LONG'
+  | 'EMPTY'
+  | 'SKIPPED_BY_SALE'
+  | 'PHONE_EDITED'
+  | 'ENRICHED_NO_MATCH';
+
+export interface SystemMessage {
+  type: SystemMessageType;
+  text: string;
+  ts: string;
+  payload?: Record<string, unknown>;
+}
+
+export type Lifecycle = 'NEW' | 'WAITING_SCAN' | 'HAS_ZALO' | 'NO_ZALO' | 'INVALID';
+
 export interface CustomerListEntry {
   id: string;
   customerListId: string;
@@ -43,6 +65,7 @@ export interface CustomerListEntry {
   phoneRaw: string;
   nameRaw: string | null;
   personalNote: string | null;
+  systemMessages: SystemMessage[];
   phoneE164: string | null;
   phoneLocal: string | null;
   phoneValid: boolean;

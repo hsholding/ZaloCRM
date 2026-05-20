@@ -1709,6 +1709,20 @@ model CustomerListEntry {
   // Tên field cố ý KHÔNG là `notes` để tránh nhầm với Contact.notes (CRM internal notes).
   personalNote String? @map("personal_note")
 
+  // 2026-05-20: 2-axis status refactor.
+  // Lifecycle (5 state) đọc từ `status` + `hasZalo`:
+  //   Mới — entry vừa insert (status=pending/validated, chưa qua worker)
+  //   Đang chờ Quét — đã validate hoặc Friend check no-match (status=validated|enriched + hasZalo=null)
+  //   Có Zalo — hasZalo=true
+  //   Không có Zalo — hasZalo=false (CHỈ Campaign SDK 404 confirm)
+  //   Lỗi — status=invalid (parse fail)
+  //
+  // systemMessages = append-only stack các sự kiện đặc thù (trùng list X, đã CRM,
+  // sale loại, số sai format cụ thể, ...). Newest top, hover xem full.
+  // Race-safe append qua raw SQL: jsonb_array_append(system_messages, $event::jsonb).
+  // KHÔNG dùng để filter chính (dùng dup_*_id index riêng) — chỉ for display.
+  systemMessages Json @default("[]") @map("system_messages")
+
   // Normalized phone variants
   phoneE164     String? @map("phone_e164")     // "+84908123456"
   phoneLocal    String? @map("phone_local")    // "0908123456" — Vietnamese local format

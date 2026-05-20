@@ -22,6 +22,7 @@
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { recomputeListCounters } from './list-entry-routes.js';
+import { appendSystemMessage } from './list-system-messages.js';
 
 const CHUNK_SIZE = 200;
 const TICK_INTERVAL_MS = 30 * 1000; // 30 seconds
@@ -59,11 +60,16 @@ async function enrichListOnce(listId: string): Promise<{ processed: number; enri
 
   // Process in chunks until no more pending
   while (true) {
-    // FIX 2026-05-20: chỉ pick entries 'validated' — KHÔNG đụng vào dup_in_list,
-    // dup_cross_list, dup_with_crm, invalid, skipped, enriched. Trước đó query
-    // chỉ filter `hasZalo: null` → chộp luôn dup_* entries (vì chúng cũng có
-    // hasZalo=null) → ghi đè status='enriched' làm mất marker dup → UI list
-    // detail mất pill "Đã có ở tệp X" / "Đã là khách CRM".
+    // 2026-05-20 v2 (advisory dup model): worker enrich tất cả entries valid +
+    // 'validated' status (kể cả có dup_*_id fields). Dup giờ chỉ là system message,
+    // không terminal nữa. Anti-double-touch sẽ enforce ở Campaign rule engine
+    // (cross_nick_friendship_recency), không phải ở enrichment layer.
+    //
+    // Vẫn skip:
+    //   - status='invalid' (parse fail, không có phone E164)
+    //   - status='skipped' (sale loại)
+    //   - status='enriched' (đã processed)
+    //   - hasZalo!=null (đã có verdict)
     const pending = await prisma.customerListEntry.findMany({
       where: {
         customerListId: listId,
@@ -160,6 +166,11 @@ async function enrichListOnce(listId: string): Promise<{ processed: number; enri
             status: 'enriched',
             enrichedAt: new Date(),
           },
+        });
+        // Emit message để sale biết worker đã check Friend xong (idempotent skip duplicates)
+        await appendSystemMessage(entry.id, {
+          type: 'ENRICHED_NO_MATCH',
+          text: 'Đã check Friend — không match nick nào',
         });
       }
     }
