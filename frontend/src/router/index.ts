@@ -117,6 +117,19 @@ const routes = [
     component: () => import('@/views/AutomationView.vue'),
     meta: { requiresAuth: true },
   },
+  // Phase 7 — Bot-Auto framework (Block / Sequence / Trigger / Broadcast)
+  {
+    path: '/automation/bot',
+    component: () => import('@/views/automation/BotAutoShell.vue'),
+    meta: { requiresAuth: true },
+    redirect: '/automation/bot/triggers',
+    children: [
+      { path: 'triggers',   name: 'BotAuto.Triggers',   component: () => import('@/views/automation/TriggersView.vue') },
+      { path: 'blocks',     name: 'BotAuto.Blocks',     component: () => import('@/views/automation/BlocksView.vue') },
+      { path: 'sequences',  name: 'BotAuto.Sequences',  component: () => import('@/views/automation/SequencesView.vue') },
+      { path: 'broadcasts', name: 'BotAuto.Broadcasts', component: () => import('@/views/automation/BroadcastsView.vue') },
+    ],
+  },
   {
     path: '/groups',
     name: 'Groups',

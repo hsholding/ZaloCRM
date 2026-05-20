@@ -40,11 +40,14 @@
               <span class="ic">⚡</span>Automation<span class="caret">▾</span>
             </button>
           </template>
-          <v-list density="compact" min-width="220">
-            <v-list-item to="/automation" title="Tổng quan" prepend-icon="mdi-chart-box-outline" />
-            <v-list-item to="/automation?tab=send-message" title="Nhắn tin" prepend-icon="mdi-message-fast-outline" />
-            <v-list-item to="/automation?tab=add-friend" title="Kết bạn" prepend-icon="mdi-account-plus-outline" />
-            <v-list-item to="/automation?tab=follow-up" title="Bám đuổi" prepend-icon="mdi-radar" />
+          <v-list density="compact" min-width="240">
+            <v-list-item to="/automation" title="Tổng quan (legacy rules)" prepend-icon="mdi-chart-box-outline" />
+            <v-divider class="my-1" />
+            <v-list-subheader>Bot-Auto (Phase 7)</v-list-subheader>
+            <v-list-item to="/automation/bot/triggers"   title="Kịch bản (Triggers)" prepend-icon="mdi-lightning-bolt" />
+            <v-list-item to="/automation/bot/blocks"     title="Thư viện block"      prepend-icon="mdi-puzzle" />
+            <v-list-item to="/automation/bot/sequences"  title="Kịch bản chăm sóc"   prepend-icon="mdi-format-list-numbered" />
+            <v-list-item to="/automation/bot/broadcasts" title="Broadcast"           prepend-icon="mdi-bullhorn" />
           </v-list>
         </v-menu>
 
