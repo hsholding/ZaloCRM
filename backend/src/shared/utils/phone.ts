@@ -1,5 +1,5 @@
 /**
- * phone.ts — Canonical SĐT normalization cho VN.
+ * phone.ts — Canonical SĐT normalization.
  *
  * Tại sao: VN có 3+ format cùng số: 0xxx (local), 84xxx (intl), +84xxx (e164).
  * DB lưu `phoneNormalized` canonical (84xxx no leading + no spaces) + index để:
@@ -7,14 +7,14 @@
  *   - Search exact match indexed O(log n) thay vì OR contains O(n)
  *   - Cross-system compare ổn định
  *
- * Rule:
- *   - Trim, strip non-digit (giữ + tạm thời để detect intl)
- *   - + có hoặc không → strip
- *   - Bắt đầu 0 + 9-10 digit → strip 0, prepend 84 → 84xxx
- *   - Bắt đầu 84 + 9-10 digit (10-12 total) → giữ
- *   - Bắt đầu 9-10 digit không prefix → assume local, prepend 84
- *   - Khác (quốc tế ngoài VN, length lạ) → giữ raw digits làm best-effort
- *   - Length < 9 hoặc > 13 → return null (invalid)
+ * 2 mức strict:
+ *   - normalizePhone()      — LOOSE: chấp nhận mọi format không hỏng (số bàn, 11-digit
+ *                              legacy, mobile, country khác). Dùng cho Contact/Friend
+ *                              vì sale có thể nhập số bất kỳ (kể cả landline).
+ *   - normalizeVnMobile()   — STRICT: CHỈ VN mobile 10-digit + prefix [35789].
+ *                              Dùng cho CustomerListEntry parsing (Zalo target only).
+ *
+ * Chính sách 2026-05-20: tách 2 mức để không phá Contact existing data.
  */
 export function normalizePhone(input: string | null | undefined): string | null {
   if (!input) return null;
@@ -37,6 +37,50 @@ export function normalizePhone(input: string | null | undefined): string | null 
   if (digits.length === 9) return '84' + digits;
   // Other country / unknown: keep digits as-is (best effort)
   return digits;
+}
+
+/**
+ * STRICT VN mobile normalizer (10-digit prefix [35789]).
+ *
+ * Returns canonical "84[35789]xxxxxxxx" (11 digit, no +) hoặc null.
+ *
+ * Accept:
+ *   0[35789]xxxxxxxx         (10 digit local)
+ *   84[35789]xxxxxxxx        (11 digit, prefix 84)
+ *   +84[35789]xxxxxxxx       (E.164)
+ *   [35789]xxxxxxxx          (9 digit mobile, không có 0 đầu)
+ *
+ * Reject:
+ *   - 11-digit legacy (0xxxxxxxxxx, 2018 VN bỏ prefix 011/0120/0121/...)
+ *   - 02xxxxxxxx (số bàn HCM/HN/...)
+ *   - 04/06xxx (prefix chưa cấp)
+ *   - Country khác VN (+886, +1, ...)
+ *   - Length lạ (< 9 hoặc > 11)
+ *
+ * Dùng cho: CustomerListEntry import (Zalo personal target only).
+ */
+const VN_MOBILE_PREFIX = /^[35789]/;
+export function normalizeVnMobile(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const raw = String(input).trim();
+  if (!raw) return null;
+
+  const digits = raw.replace(/[^\d]/g, '');
+  if (digits.length === 0) return null;
+
+  // 10 digit bắt đầu 0 + mobile prefix → strip 0, prepend 84
+  if (digits.length === 10 && digits[0] === '0' && VN_MOBILE_PREFIX.test(digits.slice(1, 2))) {
+    return '84' + digits.slice(1);
+  }
+  // 11 digit bắt đầu 84 + mobile prefix → giữ
+  if (digits.length === 11 && digits.startsWith('84') && VN_MOBILE_PREFIX.test(digits.slice(2, 3))) {
+    return digits;
+  }
+  // 9 digit không leading 0, đầu là mobile prefix → assume thiếu 0, prepend 84
+  if (digits.length === 9 && VN_MOBILE_PREFIX.test(digits)) {
+    return '84' + digits;
+  }
+  return null;
 }
 
 /**

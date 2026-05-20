@@ -14,7 +14,7 @@
  */
 
 import { prisma } from '../../../shared/database/prisma-client.js';
-import { normalizePhone } from '../../../shared/utils/phone.js';
+import { normalizeVnMobile } from '../../../shared/utils/phone.js';
 import type { ParsedLine, ImportResult, InvalidReason, MappedRow } from './types.js';
 
 /**
@@ -29,13 +29,13 @@ function stripPhonePrefix(input: string): string {
 }
 
 /**
- * Convert canonical "84908123456" → local "0908123456" (VN).
- * Khác country code → return null (chỉ support VN trong v1).
+ * Convert canonical "84904294048" → local "0904294048" (VN mobile, 10 digit).
+ * Chỉ accept đúng 11-digit canonical bắt đầu 84 + mobile prefix.
  */
 export function toLocalFormat(e164OrCanonical: string | null): string | null {
   if (!e164OrCanonical) return null;
   const digits = e164OrCanonical.replace(/^\+/, '');
-  if (digits.startsWith('84') && (digits.length === 11 || digits.length === 12)) {
+  if (digits.length === 11 && digits.startsWith('84') && /^[35789]/.test(digits.slice(2, 3))) {
     return '0' + digits.slice(2);
   }
   return null;
@@ -146,14 +146,22 @@ function parseSingleLine(
     }
   }
 
-  // Normalize qua util sẵn có (84xxx canonical) + invalidate nếu null
-  const canonical = normalizePhone(phonePart);
+  // Normalize qua util sẵn có (84xxx canonical) + invalidate nếu null.
+  // Policy 2026-05-20: chỉ accept VN mobile 10-digit local. Phân loại lý do invalid:
+  //   empty            — không có chữ số nào
+  //   too_short        — < 9 chữ số
+  //   too_long         — > 11 chữ số (11 max cho 84xxx)
+  //   invalid_prefix   — đủ length nhưng sai prefix (02xxx số bàn, 11-digit legacy,
+  //                      country khác VN, đầu không phải 3/5/7/8/9)
+  //   invalid_format   — fallback
+  const canonical = normalizeVnMobile(phonePart);
   if (!canonical) {
     const digits = phonePart.replace(/[^\d]/g, '');
     let reason: InvalidReason = 'invalid_format';
     if (digits.length === 0) reason = 'empty';
     else if (digits.length < 9) reason = 'too_short';
-    else if (digits.length > 13) reason = 'too_long';
+    else if (digits.length > 11) reason = 'too_long';
+    else reason = 'invalid_prefix'; // 9-11 chữ số nhưng prefix không match VN mobile
     return {
       rowIndex,
       phoneRaw: original,
