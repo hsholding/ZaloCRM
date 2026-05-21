@@ -20,6 +20,24 @@ const KNOWN_MSG_TYPE_PATTERNS = [
  */
 export function detectContentType(msgType: string | undefined, content: any): string {
   if (!msgType) return 'text';
+
+  // ── FIX 2026-05-21: action-based dispatch PHẢI chạy trước msgType keyword check ──
+  // Zalo wrap call/bank/qr trong cùng family "recommended.*" → nếu để keyword check
+  // "recommended/card" ăn trước, call message sẽ bị classify nhầm thành 'contact_card'
+  // (KH gọi 39s lúc 12:10 = content_type='contact_card' thay vì 'call' → bị bỏ qua
+  // trong engagement call_count). Lưu ý: Zalo có typo "recommened" (thiếu chữ 'd') —
+  // match cả 2 để safe.
+  if (typeof content === 'object' && content !== null) {
+    const action = typeof content.action === 'string' ? content.action : '';
+    if (action.includes('calltime') || action.includes('misscall')) return 'call';
+    if (action === 'zinstant.bankcard') return 'bank_transfer';
+    if (typeof content.description === 'string' && content.description.includes('qrCodeUrl')) {
+      return 'qr_code';
+    }
+    // Fallback shape detection cho call (1 số SDK version dùng key khác)
+    if (content.callDuration !== undefined || content.callType !== undefined) return 'call';
+  }
+
   if (msgType.includes('photo') || msgType.includes('image')) return 'image';
   if (msgType.includes('sticker')) return 'sticker';
   if (msgType.includes('video')) return 'video';

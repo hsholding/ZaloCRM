@@ -61,7 +61,12 @@
         </div>
         <div class="bd-item">
           <span class="bd-label">📞 Cuộc gọi</span>
-          <span class="bd-val">{{ breakdown.totalCalls ?? 0 }} lần</span>
+          <span class="bd-val">
+            {{ breakdown.totalCalls ?? 0 }} lần<span
+              v-if="(breakdown.totalMissedCalls ?? 0) > 0"
+              class="bd-val-sub"
+            > ({{ breakdown.totalMissedCalls }} nhỡ)</span>
+          </span>
         </div>
         <div class="bd-item">
           <span class="bd-label">📎 Ảnh/file/video</span>
@@ -97,6 +102,7 @@ interface TimelineCell {
   mediaShareCount: number;
   voiceMsgCount: number;
   callCount: number;
+  missedCallCount: number;
   quoteReplyCount: number;
   customerInitiated: boolean;
   dailyIntensity: number;
@@ -109,6 +115,7 @@ interface Breakdown {
   totalMedia: number;
   totalVoice: number;
   totalCalls: number;
+  totalMissedCalls: number;
   totalQuoteReplies: number;
   daysInitiated: number;
   replyRate: number;
@@ -188,6 +195,7 @@ function cellTooltip(cell: TimelineCell): string {
   if (cell.inboundMsgCount > 0) parts.push(`💬 KH ${cell.inboundMsgCount}`);
   if (cell.outboundMsgCount > 0) parts.push(`📤 Sale ${cell.outboundMsgCount}`);
   if (cell.callCount > 0) parts.push(`📞 ${cell.callCount}`);
+  if (cell.missedCallCount > 0) parts.push(`📵 nhỡ ${cell.missedCallCount}`);
   if (cell.quoteReplyCount > 0) parts.push(`↩️ ${cell.quoteReplyCount}`);
   if (cell.voiceMsgCount > 0) parts.push(`🎤 ${cell.voiceMsgCount}`);
   if (cell.mediaShareCount > 0) parts.push(`📎 ${cell.mediaShareCount}`);
@@ -344,6 +352,7 @@ defineExpose({ refresh: fetchTimeline });
   min-width: 0;
 }
 .bd-val { font-weight: 600; color: #1F2D3D; flex: 0 0 auto; }
+.bd-val-sub { font-weight: 500; color: #97A0AC; font-size: 10.5px; }
 
 /* Loading skeleton */
 .eh-skeleton {

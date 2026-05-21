@@ -182,13 +182,17 @@ export async function handleIncomingMessage(
     if (msg.threadType !== 'group' && contactId) {
       void (async () => {
         try {
-          const { incrementDailyAggregate, messageEngagementInputs } =
+          const { incrementDailyAggregate, messageEngagementInputs, parseCallMeta } =
             await import('../engagement/engagement-service.js');
           // hasQuote: KH dùng quote-reply (Zalo "trả lời tin nhắn") → quote payload non-null/non-empty
           const q = (msg as any).quote;
           const hasQuote = q !== undefined && q !== null
             && (typeof q !== 'object' || Object.keys(q).length > 0);
-          const signals = messageEngagementInputs(message.contentType, msg.isSelf, hasQuote);
+          // callMeta: tách missed vs connected từ content.params
+          const callMeta = message.contentType === 'call'
+            ? parseCallMeta(msg.content, msg.isSelf)
+            : null;
+          const signals = messageEngagementInputs(message.contentType, msg.isSelf, hasQuote, callMeta);
 
           // customerInitiated: KH nhắn trước trong ngày (chỉ khi inbound + chưa có activity nào hôm nay)
           let customerInitiated = false;
@@ -215,6 +219,7 @@ export async function handleIncomingMessage(
             mediaShare: signals.mediaShare,
             voiceMsg: signals.voiceMsg,
             call: signals.call,
+            missedCall: signals.missedCall,
             quoteReply: signals.quoteReply,
             customerInitiated,
           });

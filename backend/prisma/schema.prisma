@@ -1658,7 +1658,8 @@ model ContactEngagementDaily {
   reactionCount     Int     @default(0) @map("reaction_count")   // KH reaction trên tin sale
   mediaShareCount   Int     @default(0) @map("media_share_count") // KH gửi ảnh/video/file/voice/location/...
   voiceMsgCount     Int     @default(0) @map("voice_msg_count")  // KH gửi voice (subset của media)
-  callCount         Int     @default(0) @map("call_count")        // KH gọi voice/video call (contentType='call')
+  callCount         Int     @default(0) @map("call_count")        // KH gọi voice/video — duration > 0 (connected)
+  missedCallCount   Int     @default(0) @map("missed_call_count")  // KH gọi nhỡ — duration = 0 (intent yếu hơn)
   quoteReplyCount   Int     @default(0) @map("quote_reply_count") // KH quote-reply 1 tin của sale (signal mạnh)
   customerInitiated Boolean @default(false) @map("customer_initiated") // KH nhắn trước trong ngày
 

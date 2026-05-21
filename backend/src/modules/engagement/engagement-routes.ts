@@ -55,6 +55,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         mediaShareCount: true,
         voiceMsgCount: true,
         callCount: true,
+        missedCallCount: true,
         quoteReplyCount: true,
         customerInitiated: true,
         dailyIntensity: true,
@@ -75,6 +76,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       mediaShareCount: number;
       voiceMsgCount: number;
       callCount: number;
+      missedCallCount: number;
       quoteReplyCount: number;
       customerInitiated: boolean;
       dailyIntensity: number;
@@ -91,6 +93,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         mediaShareCount: r?.mediaShareCount ?? 0,
         voiceMsgCount: r?.voiceMsgCount ?? 0,
         callCount: r?.callCount ?? 0,
+        missedCallCount: r?.missedCallCount ?? 0,
         quoteReplyCount: r?.quoteReplyCount ?? 0,
         customerInitiated: r?.customerInitiated ?? false,
         dailyIntensity: r?.dailyIntensity ?? 0,
@@ -104,6 +107,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
     let totalMedia = 0;
     let totalVoice = 0;
     let totalCalls = 0;
+    let totalMissedCalls = 0;
     let totalQuoteReplies = 0;
     let daysInitiated = 0;
     for (const r of rows) {
@@ -113,6 +117,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       totalMedia += r.mediaShareCount;
       totalVoice += r.voiceMsgCount;
       totalCalls += r.callCount;
+      totalMissedCalls += r.missedCallCount;
       totalQuoteReplies += r.quoteReplyCount;
       if (r.customerInitiated) daysInitiated++;
     }
@@ -142,6 +147,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         totalMedia,
         totalVoice,
         totalCalls,
+        totalMissedCalls,
         totalQuoteReplies,
         daysInitiated,
         replyRate,

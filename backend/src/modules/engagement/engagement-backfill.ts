@@ -11,7 +11,7 @@
  */
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
-import { computeDailyIntensity, recomputeContactEngagement } from './engagement-service.js';
+import { computeDailyIntensity, recomputeContactEngagement, parseCallMeta } from './engagement-service.js';
 
 interface BackfillOptions {
   orgId: string;
@@ -56,6 +56,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
       sentAt: true,
       senderType: true,
       contentType: true,
+      content: true,
       conversationId: true,
       quote: true,
       conversation: { select: { contactId: true } },
@@ -73,6 +74,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
     mediaShareCount: number;
     voiceMsgCount: number;
     callCount: number;
+    missedCallCount: number;
     quoteReplyCount: number;
     customerInitiated: boolean;
     /** earliest sentAt today (used to determine customerInitiated) */
@@ -102,6 +104,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
         mediaShareCount: 0,
         voiceMsgCount: 0,
         callCount: 0,
+        missedCallCount: 0,
         quoteReplyCount: 0,
         customerInitiated: false,
         firstSentAt: Number.POSITIVE_INFINITY,
@@ -124,8 +127,21 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
 
     if (!isSelf && isMedia) row.mediaShareCount++;
     if (!isSelf && isVoice) row.voiceMsgCount++;
-    if (!isSelf && isCall) row.callCount++;
     if (!isSelf && hasQuote) row.quoteReplyCount++;
+    if (isCall) {
+      // Parse content (stored as JSON text) → tách missed vs connected
+      let parsedContent: unknown = null;
+      try {
+        parsedContent = typeof m.content === 'string' && m.content.startsWith('{')
+          ? JSON.parse(m.content)
+          : m.content;
+      } catch { /* ignore */ }
+      const meta = parseCallMeta(parsedContent, isSelf);
+      if (meta) {
+        if (meta.isMissed) row.missedCallCount++;
+        else row.callCount++;
+      }
+    }
 
     // Reactions: count only zalo-sourced (KH thả ❤️ trên tin sale)
     if (isSelf) {
@@ -161,6 +177,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
         mediaShareCount: row.mediaShareCount,
         voiceMsgCount: row.voiceMsgCount,
         callCount: row.callCount,
+        missedCallCount: row.missedCallCount,
         quoteReplyCount: row.quoteReplyCount,
         customerInitiated: row.customerInitiated,
       });
@@ -174,6 +191,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
           mediaShareCount: row.mediaShareCount,
           voiceMsgCount: row.voiceMsgCount,
           callCount: row.callCount,
+          missedCallCount: row.missedCallCount,
           quoteReplyCount: row.quoteReplyCount,
           customerInitiated: row.customerInitiated,
           dailyIntensity: intensity,
@@ -188,6 +206,7 @@ export async function runBackfill(opts: BackfillOptions): Promise<BackfillResult
           mediaShareCount: row.mediaShareCount,
           voiceMsgCount: row.voiceMsgCount,
           callCount: row.callCount,
+          missedCallCount: row.missedCallCount,
           quoteReplyCount: row.quoteReplyCount,
           customerInitiated: row.customerInitiated,
           dailyIntensity: intensity,
