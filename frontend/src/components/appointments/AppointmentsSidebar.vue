@@ -1,18 +1,6 @@
 <template>
   <aside class="apt-sidebar">
-    <div class="side-section">
-      <h4>Phạm vi</h4>
-      <div class="scope-toggle">
-        <button
-          v-for="opt in scopeOptions"
-          :key="opt.value"
-          :class="{ active: scope === opt.value }"
-          @click="$emit('update:scope', opt.value)"
-        >{{ opt.label }}</button>
-      </div>
-    </div>
-
-    <!-- Nguồn — 3-tab segmented, same style as Phạm vi (no icon để không bể UI) -->
+    <!-- Nguồn (đẩy lên trên) — 3-tab segmented -->
     <div class="side-section">
       <h4>Nguồn</h4>
       <div class="scope-toggle">
@@ -25,19 +13,40 @@
       </div>
     </div>
 
-    <div v-if="scope !== 'me'" class="side-section">
-      <h4>Sale phụ trách</h4>
-      <div class="sale-list">
-        <div
-          v-for="u in users"
-          :key="u.id"
-          class="sale"
-          :class="{ active: selectedSales.has(u.id) }"
-          @click="toggleSale(u.id)"
-        >
-          <span class="swatch" :style="{ background: saleColor(u.id).bg }" />
-          <span class="name">{{ u.fullName }}<span v-if="u.id === currentUserId"> (tôi)</span></span>
-          <span class="count">{{ countBySale[u.id] || 0 }}</span>
+    <!-- Phạm vi (dưới Nguồn) — segmented + nếu pick Nhóm/Tất cả thì xổ
+         danh sách sale ra dưới dạng expansion box (đậm hơn để hiểu là
+         sub-content được xổ ra từ Phạm vi). -->
+    <div class="side-section side-section--with-expansion">
+      <h4>Phạm vi</h4>
+      <div class="scope-toggle">
+        <button
+          v-for="opt in scopeOptions"
+          :key="opt.value"
+          :class="{ active: scope === opt.value }"
+          @click="$emit('update:scope', opt.value)"
+        >{{ opt.label }}</button>
+      </div>
+
+      <!-- Expansion box: chỉ hiện khi scope = team/all. Bg đậm hơn surface
+           bình thường, border + arrow connector để user hiểu xổ ra từ tab -->
+      <div v-if="scope !== 'me'" class="scope-expansion">
+        <div class="scope-expansion__arrow"></div>
+        <div class="scope-expansion__head">
+          Sale phụ trách
+          <span class="badge">{{ users.length }}</span>
+        </div>
+        <div class="sale-list">
+          <div
+            v-for="u in users"
+            :key="u.id"
+            class="sale"
+            :class="{ active: selectedSales.has(u.id) }"
+            @click="toggleSale(u.id)"
+          >
+            <span class="swatch" :style="{ background: saleColor(u.id).bg }" />
+            <span class="name">{{ u.fullName }}<span v-if="u.id === currentUserId"> (tôi)</span></span>
+            <span class="count">{{ countBySale[u.id] || 0 }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -276,18 +285,67 @@ function fmtTime(a: Appointment): string {
   color: var(--at-on-primary);
 }
 
-/* Sale filter list */
+/* Expansion box xổ ra từ Phạm vi khi pick Nhóm/Tất cả.
+   Bg đậm hơn surface-soft xung quanh + arrow connector để user hiểu
+   nó là sub-content thuộc về tab Phạm vi vừa bấm. */
+.scope-expansion {
+  position: relative;
+  margin-top: var(--at-s-xs);
+  padding: var(--at-s-sm);
+  background: var(--at-surface-strong);
+  border: 1px solid var(--at-border-strong);
+  border-radius: var(--at-r-md);
+}
+.scope-expansion__arrow {
+  position: absolute;
+  top: -7px;
+  left: 24px;
+  width: 12px; height: 12px;
+  background: var(--at-surface-strong);
+  border-left: 1px solid var(--at-border-strong);
+  border-top: 1px solid var(--at-border-strong);
+  transform: rotate(45deg);
+}
+.scope-expansion__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--at-s-xs);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--at-ink);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.scope-expansion__head .badge {
+  font-size: 10px;
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+  padding: 1px 6px;
+  border-radius: var(--at-r-pill);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* Sale filter list (trong expansion box) */
 .sale-list { display: flex; flex-direction: column; gap: 2px; }
 .sale-list .sale {
   display: flex; align-items: center; gap: var(--at-s-xs);
   padding: 6px 8px;
   border-radius: var(--at-r-sm);
+  background: var(--at-canvas);
   cursor: pointer;
   font-size: 13px;
   color: var(--at-body);
 }
-.sale-list .sale:active { background: var(--at-canvas); }
-.sale-list .sale.active { color: var(--at-ink); font-weight: 500; background: var(--at-canvas); }
+.sale-list .sale:active { background: var(--at-surface-soft); }
+.sale-list .sale.active {
+  color: var(--at-ink);
+  font-weight: 500;
+  background: var(--at-canvas);
+  box-shadow: inset 0 0 0 1px var(--at-ink);
+}
 .sale-list .sale .swatch {
   width: 10px; height: 10px;
   border-radius: 50%;
