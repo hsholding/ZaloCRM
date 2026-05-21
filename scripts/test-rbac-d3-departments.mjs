@@ -11,9 +11,12 @@ const token = jwt.sign({ userId: USER_ID, orgId: ORG_ID, role: 'owner' }, secret
 async function call(method, path, body) {
   const opts = {
     method,
-    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    headers: { 'Authorization': 'Bearer ' + token },
   };
-  if (body) opts.body = JSON.stringify(body);
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
   const res = await fetch(API + path, opts);
   const text = await res.text();
   let data;

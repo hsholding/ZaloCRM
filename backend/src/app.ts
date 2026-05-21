@@ -171,6 +171,8 @@ async function bootstrap() {
   // RBAC Phase Phân Quyền 2026-05-21 — Department + PermissionGroup (M2 Getfly Clone)
   const { registerDepartmentRoutes } = await import('./modules/rbac/department-routes.js');
   await registerDepartmentRoutes(app);
+  const { registerPermissionGroupRoutes } = await import('./modules/rbac/permission-group-routes.js');
+  await registerPermissionGroupRoutes(app);
   await app.register(zaloLabelsRoutes);
   await app.register(zinstantProxyRoutes);
   await app.register(dashboardRoutes);
