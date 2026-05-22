@@ -92,6 +92,7 @@
       :friendship="selectedConv.friendship ?? null"
       :active-zalo-account-id="selectedConv.zaloAccount?.id ?? null"
       :friend-id="selectedConv.friendship?.id ?? null"
+      :conversation-id="selectedConv.id ?? null"
       :ai-summary="aiSummary"
       :ai-summary-loading="aiSummaryLoading"
       :ai-sentiment="aiSentiment"
@@ -244,8 +245,12 @@ watch(
 // ════════ Existing handlers ════════
 // currentTypers: sale collab typing (typingUsers từ presence) + KH typing
 // (typingConvIds từ Wave 1 zalo:typing socket). KH hiện thành "KH" hoặc tên contact.
+// Loại bỏ CHÍNH user đang đăng nhập khỏi list — user tự biết mình đang gõ, không
+// cần hiện "thanhpc@x đang nhập" cho chính họ thấy. Anh chốt 2026-05-22.
 const currentTypers = computed(() => {
-  const internal = (selectedConvId.value ? typingUsers.value.get(selectedConvId.value) : null) || [];
+  const myId = currentUserId.value;
+  const internalAll = (selectedConvId.value ? typingUsers.value.get(selectedConvId.value) : null) || [];
+  const internal = myId ? internalAll.filter(u => u.userId !== myId) : internalAll;
   if (!selectedConvId.value || !typingConvIds.value.has(selectedConvId.value)) {
     return internal;
   }
