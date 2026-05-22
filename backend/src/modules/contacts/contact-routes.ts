@@ -289,7 +289,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       if (!contact) return reply.status(404).send({ error: 'Contact not found' });
 
       const display = computeAggregateDisplay(contact);
-      return { ...contact, ...display };
+
+      // Phase Riêng Tư 2026-05-22: blur PII nếu contact có friend row thuộc main-nick non-owned (Q4 lock)
+      const { buildPrivacyContext, shouldRedactContactPii, redactContact } = await import('../privacy/redact.js');
+      const privacyCtx = await buildPrivacyContext(request);
+      const shouldRedact = await shouldRedactContactPii(contact.id, privacyCtx);
+      const merged = { ...contact, ...display };
+      return shouldRedact ? redactContact(merged as any) : merged;
     } catch (err) {
       logger.error('[contacts] Detail error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contact' });

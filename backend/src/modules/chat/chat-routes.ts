@@ -696,9 +696,16 @@ export async function chatRoutes(app: FastifyInstance) {
 
     const conversation = await prisma.conversation.findFirst({
       where: { id, orgId: user.orgId },
-      select: { id: true },
+      select: {
+        id: true,
+        zaloAccount: { select: { privacyMode: true, ownerUserId: true } },
+      },
     });
     if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+
+    // Phase Riêng Tư 2026-05-22: redact content nếu conv main-nick + viewer không own + chưa unlock
+    const { buildPrivacyContext, redactMessage } = await import('../privacy/redact.js');
+    const privacyCtx = await buildPrivacyContext(request);
 
     const [messages, total] = await Promise.all([
       prisma.message.findMany({
@@ -733,7 +740,13 @@ export async function chatRoutes(app: FastifyInstance) {
       prisma.message.count({ where: { conversationId: id } }),
     ]);
 
-    return { messages: messages.reverse(), total, page: parseInt(page), limit: parseInt(limit) };
+    const ordered = messages.reverse();
+    const redacted = ordered.map((m) => {
+      const r = redactMessage(m as any, conversation as any, privacyCtx);
+      // BigInt zaloMsgIdNum → string cho JSON serialize
+      return { ...r, zaloMsgIdNum: (r as any).zaloMsgIdNum?.toString() ?? null };
+    });
+    return { messages: redacted, total, page: parseInt(page), limit: parseInt(limit) };
   });
 
   // ── Send message ─────────────────────────────────────────────────────────
