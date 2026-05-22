@@ -12,6 +12,10 @@
     />
 
     <div class="bubble-wrapper">
+      <!-- bubble-anchor: positioning parent CHỈ cho bubble + reaction. Tách khỏi
+           wrapper để reaction-display absolute bottom: tính từ BUBBLE BOTTOM, không
+           phải wrapper bottom (wrapper kéo dài khi có receipt chip phía dưới). -->
+      <div class="bubble-anchor">
       <!-- Bubble -->
       <div
         class="message-bubble"
@@ -214,7 +218,9 @@
       </div>
 
       <!-- Reaction display — Anh chốt 2026-05-22 Zalo native:
-           1 box duy nhất chứa icons + tổng count. self → align RIGHT, other → align LEFT. -->
+           1 box duy nhất chứa icons + tổng count. self → align RIGHT, other → align LEFT.
+           Bên trong bubble-anchor để absolute bottom: tính từ bubble bottom, không phải
+           wrapper bottom (wrapper kéo dài khi có receipt-chip-row phía dưới). -->
       <reaction-display
         v-if="reactions && reactions.length > 0"
         :reactions="reactions"
@@ -223,6 +229,7 @@
         @toggle="(emoji) => emit('toggle-reaction', emoji)"
         @open-detail="emit('open-reaction-detail', { reactions, message })"
       />
+      </div><!-- /bubble-anchor -->
 
       <!-- Wave 1+2 (2026-05-22 anh chốt Zalo native UX): receipt chip CHỈ hiện
            cho tin OUTGOING CUỐI CÙNG. Render SAU reaction-display để chip nằm
@@ -718,6 +725,13 @@ function openFile(href: string) {
   /* Chừa chỗ cho reaction-display overlap (12px = 50% chiều cao chip 24px) */
   margin-bottom: 12px;
 }
+/* bubble-anchor: positioning context cho reaction-display absolute.
+   Wrap bubble + reaction để bottom: tính từ BUBBLE bottom, không phải wrapper
+   bottom (wrapper extend khi có receipt-chip-row dưới). */
+.bubble-anchor {
+  position: relative;
+  display: block;
+}
 /* Sender name giờ nằm TRONG bubble — style như header thay vì label ngoài. */
 .sender-name {
   font-size: 11.5px;
@@ -1032,9 +1046,9 @@ function openFile(href: string) {
    self → align RIGHT bubble, other → align LEFT bubble.
    Overlap ~6px dưới mép bubble (anh feedback 2026-05-22: cho sát box hơn).
    Click box → MessageThread mở popup detail. */
-.bubble-wrapper > .bubble-reaction-overlap {
+.bubble-anchor > .bubble-reaction-overlap {
   position: absolute;
-  bottom: -6px;
+  bottom: -10px;
   margin: 0;
   z-index: 2;
   /* FIX 2026-05-22: BỎ max-width — bubble nhỏ (vd tin "1") + 4 icons + total
@@ -1044,12 +1058,12 @@ function openFile(href: string) {
   width: max-content;
 }
 /* Tin self (gửi đi, bubble bên phải): anchor phải bubble, content grows leftward */
-.bubble-wrapper > .bubble-reaction-overlap.reaction-align-right {
+.bubble-anchor > .bubble-reaction-overlap.reaction-align-right {
   right: 8px;
   left: auto;
 }
 /* Tin received (gửi đến, bubble bên trái): anchor trái bubble, content grows rightward */
-.bubble-wrapper > .bubble-reaction-overlap.reaction-align-left {
+.bubble-anchor > .bubble-reaction-overlap.reaction-align-left {
   left: 8px;
   right: auto;
 }
