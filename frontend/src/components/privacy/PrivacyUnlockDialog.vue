@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { usePrivacyStore } from '@/stores/privacy';
 import { useToast } from '@/composables/use-toast';
 
@@ -193,6 +193,35 @@ watch(() => props.modelValue, (open) => {
 
 onUnmounted(() => {
   if (lockoutTimer) clearInterval(lockoutTimer);
+  document.removeEventListener('keydown', onKeyboard);
+});
+
+// Phase Privacy v2 2026-05-23 — keyboard input support cho keypad.
+// Anh báo: hiện tại chỉ click chuột. Em add listener số 0-9 + Backspace + Enter.
+function onKeyboard(e: KeyboardEvent) {
+  if (!props.modelValue) return;
+  if (step.value !== 'pin') return;
+  if (lockoutSeconds.value > 0 || checking.value) return;
+
+  // Digit 0-9 (cả top row + numpad)
+  if (/^[0-9]$/.test(e.key)) {
+    e.preventDefault();
+    pressKey(e.key);
+    return;
+  }
+  if (e.key === 'Backspace') {
+    e.preventDefault();
+    backspace();
+    return;
+  }
+  // Escape đóng dialog
+  if (e.key === 'Escape') {
+    emit('update:modelValue', false);
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeyboard);
 });
 
 function pressKey(digit: string) {

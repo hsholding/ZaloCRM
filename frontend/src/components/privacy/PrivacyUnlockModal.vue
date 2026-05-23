@@ -7,9 +7,20 @@
       </header>
 
       <div v-if="!hasPin" class="setup-first">
-        <p>Anh chưa setup PIN. Click "Setup PIN" để tạo lần đầu.</p>
-        <input v-model="currentPwd" type="password" placeholder="Mật khẩu hiện tại (xác minh)" />
-        <input v-model="newPin" type="password" placeholder="PIN mới (4 chữ số)" maxlength="4" pattern="\d{4}" />
+        <p>Anh chưa setup PIN. Đặt PIN 4 số mới (KHÔNG cần password):</p>
+        <!-- Phase Privacy v2 2026-05-23: setup chỉ cần PIN, không cần password.
+             autocomplete=off + random name chặn browser autofill cache. -->
+        <input
+          v-model="newPin"
+          type="password"
+          placeholder="PIN mới (4 chữ số)"
+          maxlength="4"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="off"
+          :name="`pinNew_${Date.now()}`"
+          @input="newPin = newPin.replace(/\D/g, '')"
+        />
         <div class="actions">
           <button class="btn-ghost" @click="$emit('close')">Hủy</button>
           <button class="btn-primary" :disabled="!canSetup || submitting" @click="setupPin">
@@ -19,15 +30,20 @@
       </div>
 
       <div v-else class="unlock-form">
+        <!-- Phase Privacy v2 2026-05-23: autocomplete=off + name động chặn Chrome/Cốc Cốc
+             auto-fill password đã save vào ô PIN. Strip non-digit on input. -->
         <input
           ref="pinInput"
           v-model="pin"
           type="password"
           maxlength="4"
-          pattern="\d{4}"
           inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="off"
+          :name="`pinUnlock_${Date.now()}`"
           placeholder="• • • •"
           class="pin-input"
+          @input="pin = pin.replace(/\D/g, '')"
           @keyup.enter="submit"
         />
         <div class="duration-picker">
@@ -85,7 +101,8 @@ const DURATIONS = [
 ];
 
 const canSubmit = computed(() => /^\d{4}$/.test(pin.value));
-const canSetup = computed(() => /^\d{4}$/.test(newPin.value) && currentPwd.value.length > 0);
+// Phase Privacy v2 2026-05-23: setup KHÔNG cần currentPwd — chỉ PIN 4 số.
+const canSetup = computed(() => /^\d{4}$/.test(newPin.value));
 
 watch(() => props.show, async (v) => {
   if (v) {
@@ -95,7 +112,12 @@ watch(() => props.show, async (v) => {
     currentPwd.value = '';
     await store.fetchStatus(true);
     await nextTick();
-    pinInput.value?.focus();
+    // Phase Privacy v2 2026-05-23: clear input value DOM-level + focus.
+    // Chống Chrome/Cốc Cốc autofill cache password vào ô PIN (anh báo bug 2026-05-23).
+    if (pinInput.value) {
+      pinInput.value.value = '';
+      pinInput.value.focus();
+    }
   }
 });
 
