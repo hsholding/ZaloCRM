@@ -34,6 +34,7 @@ import { chatAttachmentRoutes } from './modules/chat/chat-attachment-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { statusRoutes } from './modules/contacts/status-routes.js';
 import { contactSubResourceRoutes } from './modules/contacts/contact-sub-resource-routes.js';
+import { cockpitRoutes } from './modules/contacts/cockpit-routes.js';
 import { appointmentRoutes } from './modules/contacts/appointment-routes.js';
 import { notesRoutes } from './modules/contacts/notes-routes.js';
 import { startInteractionCron } from './modules/contacts/interaction-cron.js';
@@ -86,6 +87,7 @@ import { friendRoutes } from './modules/zalo/friend-routes.js';
 import { profileRoutes } from './modules/zalo/profile-routes.js';
 import { credentialRoutes } from './modules/zalo/credential-routes.js';
 import { eventBuffer } from './shared/event-buffer.js';
+import { systemNotifyRoutes } from './modules/system-notifications/system-notify-routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -165,6 +167,7 @@ async function bootstrap() {
   await app.register(contactRoutes);
   await app.register(statusRoutes);
   await app.register(contactSubResourceRoutes);
+  await app.register(cockpitRoutes);
   await app.register(appointmentRoutes);
   await app.register(notesRoutes);
   await app.register(crmTagRoutes);
@@ -196,6 +199,7 @@ async function bootstrap() {
   await app.register(zaloSyncRoutes);
   await app.register(zaloDashboardRoutes);
   await app.register(notificationRoutes);
+  await app.register(systemNotifyRoutes);
   await app.register(searchRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
@@ -287,6 +291,9 @@ async function bootstrap() {
     // Phase 6 — Lead Scoring background jobs (decay hourly + stuck detection 6am daily)
     const { startScoringScheduler } = await import('./modules/scoring/scoring-scheduler.js');
     startScoringScheduler({ enabled: config.nodeEnv !== 'test' });
+    // Phase Internal Contact 2-method 2026-05-23 — cleanup pending handshake > 7 ngày (3am daily)
+    const { startInternalContactCleanupCron } = await import('./modules/system-notifications/internal-contact-service.js');
+    startInternalContactCleanupCron();
     await eventBuffer.start(io);
     // Phase 7 — Automation engine (event bus + materializer + task worker + 3 action handlers)
     if (config.nodeEnv !== 'test') {

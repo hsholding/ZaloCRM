@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireRole } from '../auth/role-middleware.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
-import { getAiConfig, getAiUsage, updateAiConfig, generateAiOutput, aiFormatRichText } from './ai-service.js';
+import { getAiConfig, getAiUsage, updateAiConfig, generateAiOutput, aiFormatRichText, aiGenerateSalesHandoffMessage } from './ai-service.js';
 import { getAvailableProviders } from './provider-registry.js';
 import { logger } from '../../shared/utils/logger.js';
 import { prisma } from '../../shared/database/prisma-client.js';
@@ -110,6 +110,112 @@ export async function aiRoutes(app: FastifyInstance) {
     } catch (err) {
       logger.error('[ai] Sentiment error:', err);
       return sendHandledError(reply, err, 'Failed to analyze sentiment');
+    }
+  });
+
+  // ── POST /ai/sales-handoff-message ─ Template tin nội bộ sale-to-sale. 2026-05-22 v2 ─
+  // Dùng cho widget "Đồng đội cùng chăm KH" tab CRM (chat cột 4).
+  // Body: {
+  //   contactId: string,
+  //   targetUserId: string (sale nhận tin — User.id),
+  //   targetZaloAccountId?: string (optional, để lấy Friend per-pair activity)
+  // }
+  // Response: {
+  //   content: string,                       // tin nhắn theo template anh đã chốt
+  //   source: 'template',
+  //   targetZaloUid: string | null,          // UID nick Zalo của sale target → mở zalo.me/{uid}
+  //   targetZaloAccountName: string | null   // tên nick (FE hiển thị)
+  // }
+  app.post('/api/v1/ai/sales-handoff-message', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const body = request.body as { contactId?: string; targetUserId?: string; targetZaloAccountId?: string };
+      if (!body?.contactId) return reply.status(400).send({ error: 'contactId is required' });
+      if (!body?.targetUserId) return reply.status(400).send({ error: 'targetUserId is required' });
+
+      const [contact, toUser] = await Promise.all([
+        prisma.contact.findFirst({
+          where: { id: body.contactId, orgId: user.orgId, mergedInto: null },
+          select: {
+            id: true, fullName: true, crmName: true, phone: true,
+            engagementPattern: true, status: true,
+            priorityScore: true, leadScore: true,
+            nextAppointment: true,
+            statusRef: { select: { name: true } },
+          },
+        }),
+        prisma.user.findFirst({ where: { id: body.targetUserId, orgId: user.orgId }, select: { id: true, fullName: true } }),
+      ]);
+
+      if (!contact) return reply.status(404).send({ error: 'Contact not found' });
+      if (!toUser) return reply.status(404).send({ error: 'Target sale not found' });
+
+      // Lấy Friend per-pair activity của sale target × KH (cho mục "tương tác gần nhất")
+      let targetActivity: { lastInboundAt?: Date | null; lastOutboundAt?: Date | null; lastInteractionAt?: Date | null; totalInbound?: number; totalOutbound?: number } | undefined;
+      if (body.targetZaloAccountId) {
+        const friend = await prisma.friend.findFirst({
+          where: {
+            orgId: user.orgId,
+            contactId: contact.id,
+            zaloAccountId: body.targetZaloAccountId,
+          },
+          select: { lastInboundAt: true, lastOutboundAt: true, lastInteractionAt: true, totalInbound: true, totalOutbound: true },
+        });
+        if (friend) targetActivity = friend;
+      }
+
+      // Tìm appointment kế tiếp (nếu có) → bổ sung vào template
+      const upcomingAppt = await prisma.appointment.findFirst({
+        where: { contactId: contact.id, orgId: user.orgId, appointmentDate: { gte: new Date() }, status: 'scheduled' },
+        orderBy: { appointmentDate: 'asc' },
+        select: { appointmentDate: true, location: true },
+      });
+
+      // Tìm zalo nick CỦA SALE TARGET (target user) — dùng để FE mở zalo.me/{uid}
+      // → người dùng đang online nick X nhắn DM trực tiếp tới nick của sale target.
+      // Ưu tiên privacyMode='main' (nick cá nhân/chính của sale) → đó là nick nhận DM nội bộ.
+      // Fallback: nick connected mới nhất.
+      const targetZaloNick = await prisma.zaloAccount.findFirst({
+        where: {
+          orgId: user.orgId,
+          ownerUserId: body.targetUserId,
+          zaloUid: { not: null },
+        },
+        orderBy: [
+          { privacyMode: 'asc' },            // 'main' < 'sub' theo alphabet → main lên trước
+          { lastConnectedAt: 'desc' },
+        ],
+        select: { id: true, zaloUid: true, displayName: true },
+      });
+
+      const displayName = contact.crmName || contact.fullName || 'KH này';
+
+      const result = aiGenerateSalesHandoffMessage({
+        orgId: user.orgId,
+        fromSaleName: '',  // không dùng trong template mới
+        toSaleName: toUser.fullName || 'anh/chị',
+        contact: {
+          displayName,
+          phone: contact.phone,
+          statusLabel: contact.statusRef?.name || contact.status,
+          priorityScore: contact.priorityScore,
+          leadScore: contact.leadScore,
+          engagementPattern: contact.engagementPattern,
+          nextAppointmentAt: upcomingAppt?.appointmentDate || contact.nextAppointment || null,
+          nextAppointmentLocation: upcomingAppt?.location || null,
+        },
+        targetActivity,
+      });
+
+      return {
+        content: result.content,
+        source: result.source,
+        targetZaloUid: targetZaloNick?.zaloUid || null,
+        targetZaloAccountName: targetZaloNick?.displayName || null,
+      };
+    } catch (err) {
+      logger.error('[ai] Sales handoff error:', err);
+      return sendHandledError(reply, err, 'Không soạn được tin phối hợp');
     }
   });
 

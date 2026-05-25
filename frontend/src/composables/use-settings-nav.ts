@@ -46,7 +46,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'password', label: 'Đổi mật khẩu', icon: '🔑', route: '/settings/personal/password', permission: 'everyone' },
       // Phase Riêng Tư 2026-05-22 — per-user PIN gate (Privacy phase)
       { id: 'privacy', label: 'Riêng tư & PIN', icon: '🔒', route: '/settings/privacy', permission: 'everyone', aliases: ['privacy', 'pin', 'riêng tư', 'blur', 'nick chính'] },
-      { id: 'notifications', label: 'Thông báo', icon: '🔔', route: '/settings/personal/notifications', permission: 'everyone', comingSoon: true },
+      { id: 'notifications', label: 'Thông báo của tôi', icon: '🔔', route: '/settings/channels/zalo?tab=internal-contact', permission: 'everyone', aliases: ['internal contact', 'liên lạc nội bộ', 'system notify', 'thông báo zalo'] },
       { id: 'theme', label: 'Giao diện', icon: '🎨', route: '/settings/personal/theme', permission: 'everyone', comingSoon: true },
       { id: 'sessions', label: 'Phiên đăng nhập', icon: '📱', route: '/settings/personal/sessions', permission: 'everyone', comingSoon: true },
     ],
@@ -63,6 +63,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     permission: 'admin',
     items: [
       { id: 'profile', label: 'Hồ sơ tổ chức', icon: '🏢', route: '/settings/org/profile', permission: 'admin' },
+      { id: 'system-notifications', label: 'Thông báo hệ thống', icon: '🔔', route: '/settings/org/system-notifications', permission: 'admin', aliases: ['system notify', 'thông báo', 'zalo notify', 'uid'] },
       { id: 'departments', label: 'Sơ đồ tổ chức', icon: '🌳', route: '/settings/rbac/departments', permission: 'admin', aliases: ['phòng ban', 'department', 'tree', 'đội nhóm', 'team'] },
       { id: 'users', label: 'Nhân viên', icon: '👤', route: '/settings/rbac/users', permission: 'admin', aliases: ['user', 'sale', 'nhân sự'] },
       { id: 'permission-groups', label: 'Phân quyền', icon: '🛡', route: '/settings/rbac/permission-groups', permission: 'owner', aliases: ['phân quyền', 'permission', 'role', 'vai trò', 'nhóm quyền'] },
@@ -142,12 +143,26 @@ export function useSettingsNav() {
       .filter((g) => g.items.length > 0);
   });
 
-  /** Find item by route path */
+  /** Find item by route path + query. Items có query (vd ?tab=internal-contact) match riêng;
+   *  items không query match chỉ khi current route cũng không có tab matching item khác. */
   const activeItem = computed<{ group: SettingsGroup; item: SettingsItem } | null>(() => {
     const path = route.path;
+    const currentTab = route.query.tab as string | undefined;
+    // Pass 1: items có query — match path + ?tab=<x>
     for (const g of visibleGroups.value) {
-      const found = g.items.find((it) => it.route === path);
-      if (found) return { group: g, item: found };
+      for (const item of g.items) {
+        const [itemPath, itemQuery] = item.route.split('?');
+        if (itemQuery && itemPath === path) {
+          const expectedTab = new URLSearchParams(itemQuery).get('tab');
+          if (expectedTab && expectedTab === currentTab) return { group: g, item };
+        }
+      }
+    }
+    // Pass 2: items không query — match path, current route phải không có tab hoặc tab khác
+    for (const g of visibleGroups.value) {
+      for (const item of g.items) {
+        if (item.route === path) return { group: g, item };
+      }
     }
     return null;
   });

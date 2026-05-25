@@ -176,7 +176,7 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
           },
           select: { id: true, email: true },
         });
-        created.push({ id: newUser.id, email: newUser.email, group: tu.group });
+        created.push({ id: newUser.id, email: newUser.email ?? '', group: tu.group });
       }
 
       return reply.send({ ok: true, created, defaultPassword: 'Test@1234' });

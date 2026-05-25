@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Onboarding Redesign — ZaloCRM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* Calm palette — không còn warning yellow */
+    --bg-page: #F8FAFC;
+    --bg-card: #FFFFFF;
+    --border: #E5E7EB;
+    --border-strong: #D1D5DB;
+
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-muted: #94A3B8;
+
+    /* Accent — Linear-inspired blue, dịu hơn vàng cảnh báo */
+    --accent: #5E6AD2;
+    --accent-hover: #4F46E5;
+    --accent-soft: #EEF0FF;
+
+    --done: #10B981;
+    --done-soft: #ECFDF5;
+    --done-text: #047857;
+
+    --optional: #94A3B8;
+    --optional-soft: #F1F5F9;
+
+    --radius-card: 14px;
+    --radius-item: 10px;
+    --radius-pill: 9999px;
+
+    --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 0 0 1px rgba(15, 23, 42, 0.03);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg-page);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .demo-wrap {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px;
+  }
+
+  .demo-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 12px;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     ONBOARDING CARD — main container
+     ════════════════════════════════════════════════════════════════════ */
+
+  .ob-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+
+  /* ─── Header — Greeting + Progress ring + Dismiss ─── */
+
+  .ob-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ob-progress {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .ob-progress svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+  .ob-progress-track {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 5;
+  }
+  .ob-progress-fill {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 5;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.6s ease;
+  }
+  .ob-progress-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
+  }
+
+  .ob-headline {
+    flex: 1;
+    min-width: 0;
+  }
+  .ob-greeting {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.4;
+  }
+  .ob-greeting strong { color: var(--accent); font-weight: 700; }
+  .ob-sub {
+    margin: 3px 0 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .ob-dismiss {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ob-dismiss:hover { background: var(--optional-soft); color: var(--text-secondary); }
+  .ob-dismiss:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ─── Steps list ─── */
+
+  .ob-steps {
+    list-style: none;
+    padding: 6px 0;
+    margin: 0;
+  }
+
+  .ob-step {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 24px;
+    border-left: 3px solid transparent;
+    transition: background 0.15s;
+  }
+  .ob-step + .ob-step { border-top: 1px solid var(--border); }
+  .ob-step:hover { background: #FAFBFC; }
+  .ob-step.is-done { background: #FAFBFC; }
+  .ob-step.is-pending { border-left-color: var(--accent); }
+  .ob-step.is-skipped { opacity: 0.65; }
+
+  /* Marker — circle với số hoặc check */
+  .ob-marker {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+    border: 1.5px solid var(--border-strong);
+    color: var(--text-muted);
+    background: var(--bg-card);
+  }
+  .ob-step.is-done .ob-marker {
+    border-color: var(--done);
+    background: var(--done);
+    color: white;
+  }
+  .ob-step.is-pending .ob-marker {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .ob-step.is-optional .ob-marker {
+    border-style: dashed;
+    border-color: var(--border-strong);
+    color: var(--text-muted);
+  }
+  .ob-step.is-skipped .ob-marker {
+    background: var(--optional-soft);
+    color: var(--text-muted);
+    border-color: var(--border);
+  }
+
+  /* Body */
+  .ob-body { flex: 1; min-width: 0; }
+  .ob-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .ob-step.is-done .ob-title { color: var(--text-secondary); }
+  .ob-step.is-skipped .ob-title { color: var(--text-muted); }
+
+  .ob-tag {
+    background: var(--optional-soft);
+    color: var(--text-muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-pill);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .ob-detail {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  /* Action area */
+  .ob-action {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .ob-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 7px 14px;
+    border-radius: 7px;
+    font-weight: 600;
+    font-size: 12.5px;
+    cursor: pointer;
+    font-family: inherit;
+    white-space: nowrap;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .ob-btn:hover { background: var(--accent-hover); }
+  .ob-btn:active { transform: translateY(1px); }
+
+  .ob-btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .ob-btn-ghost:hover { background: var(--optional-soft); color: var(--text-secondary); }
+
+  .ob-done-label {
+    color: var(--done-text);
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--done-soft);
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .ob-skipped-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+    padding: 4px 10px;
+  }
+
+  /* ═════════════════ State 100% complete — collapsed celebrate ═════════════════ */
+  .ob-card.is-complete {
+    background: linear-gradient(135deg, #FFFFFF 0%, var(--done-soft) 100%);
+    border-color: #A7F3D0;
+  }
+  .ob-card.is-complete .ob-greeting strong { color: var(--done-text); }
+  .ob-card.is-complete .ob-progress-fill { stroke: var(--done); }
+
+  /* ═════════════════ Demo states grid ═════════════════ */
+
+  .demo-states {
+    display: grid;
+    gap: 32px;
+  }
+
+  /* Mobile responsive */
+  @media (max-width: 640px) {
+    .ob-header { flex-wrap: wrap; gap: 12px; padding: 16px 18px; }
+    .ob-step { padding: 12px 18px; flex-wrap: wrap; }
+    .ob-action { width: 100%; justify-content: flex-end; margin-top: 4px; }
+  }
+
+  /* Accessibility */
+  *:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="demo-wrap">
+
+  <!-- ═════════════ STATE 1: 1/4 — Vừa đổi password xong ═════════════ -->
+  <h2 class="demo-title">State 1 — 1/4 hoàn tất (sale mới)</h2>
+
+  <div class="ob-card">
+    <div class="ob-header">
+      <div class="ob-progress" role="progressbar" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 56 56">
+          <circle class="ob-progress-track" cx="28" cy="28" r="24"/>
+          <circle class="ob-progress-fill" cx="28" cy="28" r="24"
+                  stroke-dasharray="150.8"
+                  stroke-dashoffset="113.1"/>
+        </svg>
+        <span class="ob-progress-label">1/4</span>
+      </div>
+      <div class="ob-headline">
+        <h2 class="ob-greeting">Chào <strong>Nguyễn Văn Đức</strong>, còn 3 bước nữa thôi.</h2>
+        <p class="ob-sub">Hoàn tất để nhận thông báo khách hàng, lịch hẹn, daily KPI tự động vào Zalo.</p>
+      </div>
+    </div>
+
+    <ul class="ob-steps">
+      <li class="ob-step is-done">
+        <div class="ob-marker" aria-hidden="true">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Đổi mật khẩu</h3>
+          <p class="ob-detail">Mật khẩu của bạn đã được lưu an toàn lúc 15:41.</p>
+        </div>
+        <div class="ob-action">
+          <span class="ob-done-label">Hoàn tất</span>
+        </div>
+      </li>
+
+      <li class="ob-step is-pending">
+        <div class="ob-marker">2</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Kết nối nick Zalo</h3>
+          <p class="ob-detail">Quét QR đăng nhập ít nhất 1 nick Zalo vào CRM để chat với khách hàng.</p>
+        </div>
+        <div class="ob-action">
+          <button class="ob-btn">Kết nối ngay</button>
+        </div>
+      </li>
+
+      <li class="ob-step">
+        <div class="ob-marker">3</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Thiết lập nhận thông báo</h3>
+          <p class="ob-detail">Chọn nick CRM hoặc SĐT cá nhân nhận alert: KH đồng ý kết bạn, lịch hẹn, daily KPI.</p>
+        </div>
+        <div class="ob-action">
+          <button class="ob-btn">Thiết lập</button>
+        </div>
+      </li>
+
+      <li class="ob-step is-optional">
+        <div class="ob-marker">4</div>
+        <div class="ob-body">
+          <h3 class="ob-title">
+            Đặt PIN bảo mật
+            <span class="ob-tag">Tuỳ chọn</span>
+          </h3>
+          <p class="ob-detail">Bảo mật nick cá nhân — admin và đồng nghiệp không xem được nội dung chat.</p>
+        </div>
+        <div class="ob-action">
+          <button class="ob-btn-ghost">Bỏ qua</button>
+          <button class="ob-btn">Setup</button>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ═════════════ STATE 2: 3/4 — canDismiss=true ═════════════ -->
+  <h2 class="demo-title">State 2 — 3/4 hoàn tất (sắp xong, có nút Ẩn)</h2>
+
+  <div class="ob-card">
+    <div class="ob-header">
+      <div class="ob-progress" role="progressbar" aria-valuenow="75" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 56 56">
+          <circle class="ob-progress-track" cx="28" cy="28" r="24"/>
+          <circle class="ob-progress-fill" cx="28" cy="28" r="24"
+                  stroke-dasharray="150.8"
+                  stroke-dashoffset="37.7"/>
+        </svg>
+        <span class="ob-progress-label">3/4</span>
+      </div>
+      <div class="ob-headline">
+        <h2 class="ob-greeting"><strong>Gần xong rồi!</strong> Chỉ còn 1 bước cuối.</h2>
+        <p class="ob-sub">Đặt PIN bảo mật là tuỳ chọn — bạn có thể bỏ qua nếu không cần.</p>
+      </div>
+      <button class="ob-dismiss" aria-label="Ẩn checklist">
+        Ẩn
+      </button>
+    </div>
+
+    <ul class="ob-steps">
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Đổi mật khẩu</h3>
+          <p class="ob-detail">Mật khẩu của bạn đã được lưu an toàn.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Kết nối nick Zalo</h3>
+          <p class="ob-detail">2 nick đã kết nối: Thành HS Holding, Thành Phạm.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Thiết lập nhận thông báo</h3>
+          <p class="ob-detail">Đang nhận thông báo qua nick Thành Phạm.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+
+      <li class="ob-step is-pending is-optional">
+        <div class="ob-marker">4</div>
+        <div class="ob-body">
+          <h3 class="ob-title">
+            Đặt PIN bảo mật
+            <span class="ob-tag">Tuỳ chọn</span>
+          </h3>
+          <p class="ob-detail">Bảo mật nick cá nhân — admin và đồng nghiệp không xem được nội dung chat.</p>
+        </div>
+        <div class="ob-action">
+          <button class="ob-btn-ghost">Bỏ qua</button>
+          <button class="ob-btn">Setup</button>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- ═════════════ STATE 3: 4/4 — Complete celebrate ═════════════ -->
+  <h2 class="demo-title">State 3 — 4/4 hoàn tất (chuẩn bị auto-collapse)</h2>
+
+  <div class="ob-card is-complete">
+    <div class="ob-header">
+      <div class="ob-progress" role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 56 56">
+          <circle class="ob-progress-track" cx="28" cy="28" r="24"/>
+          <circle class="ob-progress-fill" cx="28" cy="28" r="24"
+                  stroke-dasharray="150.8"
+                  stroke-dashoffset="0"/>
+        </svg>
+        <span class="ob-progress-label" style="color: #047857;">4/4</span>
+      </div>
+      <div class="ob-headline">
+        <h2 class="ob-greeting">🎉 <strong>Setup hoàn tất!</strong> CRM sẵn sàng dùng.</h2>
+        <p class="ob-sub">Checklist sẽ tự ẩn sau 3 giây. Bạn có thể xem lại ở góc phải dưới bất cứ lúc nào.</p>
+      </div>
+    </div>
+
+    <ul class="ob-steps">
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Đổi mật khẩu</h3>
+          <p class="ob-detail">Hoàn tất.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Kết nối nick Zalo</h3>
+          <p class="ob-detail">2 nick đã kết nối.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+      <li class="ob-step is-done">
+        <div class="ob-marker">✓</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Thiết lập nhận thông báo</h3>
+          <p class="ob-detail">Đang nhận qua nick Thành Phạm.</p>
+        </div>
+        <div class="ob-action"><span class="ob-done-label">Hoàn tất</span></div>
+      </li>
+      <li class="ob-step is-skipped">
+        <div class="ob-marker">⊘</div>
+        <div class="ob-body">
+          <h3 class="ob-title">Đặt PIN bảo mật <span class="ob-tag">Đã bỏ qua</span></h3>
+          <p class="ob-detail">Bạn có thể setup sau ở tab "Riêng tư".</p>
+        </div>
+        <div class="ob-action"><span class="ob-skipped-label">Đã bỏ qua</span></div>
+      </li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

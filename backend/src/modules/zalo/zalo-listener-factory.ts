@@ -297,11 +297,11 @@ export function attachZaloListener(ctx: ListenerContext): void {
         data: { seenAt: now, deliveredAt: now }, // seen implies delivered
       });
       if (updated.count > 0) {
-        // Emit để FE update bubble — gửi danh sách msgId được flip
         const rows = await prisma.message.findMany({
           where: { zaloMsgId: { in: seenIds }, senderType: 'self' },
           select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
         });
+        logger.info(`[zalo:${accountId}] 🟢 SEEN → updated=${updated.count}, emit ${rows.length} row(s), io=${!!io}`);
         for (const r of rows) {
           io?.emit('zalo:message-status', {
             accountId,
@@ -312,6 +312,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
             seenAt: r.seenAt,
           });
         }
+      } else {
+        logger.info(`[zalo:${accountId}] 🟢 SEEN → updateMany count=0 (ids=${seenIds.join(',')})`);
       }
     } catch (err) {
       logger.warn(`[zalo:${accountId}] seen_messages error:`, err);
@@ -346,6 +348,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
           where: { zaloMsgId: { in: deliveredIds }, senderType: 'self' },
           select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
         });
+        logger.info(`[zalo:${accountId}] 🟡 DELIVERED → updated=${updated.count}, emit ${rows.length} row(s), io=${!!io}`);
         for (const r of rows) {
           io?.emit('zalo:message-status', {
             accountId,
@@ -356,6 +359,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
             seenAt: r.seenAt,
           });
         }
+      } else {
+        logger.info(`[zalo:${accountId}] 🟡 DELIVERED → updateMany count=0 (msgIds may not match any 'self' row, ids=${deliveredIds.join(',')})`);
       }
     } catch (err) {
       logger.warn(`[zalo:${accountId}] delivered_messages error:`, err);

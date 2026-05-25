@@ -24,6 +24,10 @@
       <v-icon class="mr-2" style="color: #00F2FF;">mdi-view-dashboard</v-icon>
       Dashboard
     </h1>
+
+    <!-- Phase Onboarding v1 2026-05-24 — sticky checklist cho sale mới -->
+    <OnboardingChecklist />
+
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <KpiCards :kpi="kpi" class="mb-4" />
@@ -51,6 +55,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import KpiCards from '@/components/dashboard/KpiCards.vue';
+import OnboardingChecklist from '@/components/onboarding/OnboardingChecklist.vue';
 import MessageVolumeChart from '@/components/dashboard/MessageVolumeChart.vue';
 import PipelineChart from '@/components/dashboard/PipelineChart.vue';
 import SourceChart from '@/components/dashboard/SourceChart.vue';

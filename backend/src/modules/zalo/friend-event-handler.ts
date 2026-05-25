@@ -305,6 +305,20 @@ export async function applyFriendTransition(args: {
       // Engine not loaded (e.g. in tests) — silent fail
     }
   }
+
+  // Phase Internal Contact 2-method 2026-05-23 — nếu accept này là pending handshake
+  // setup của sale → trigger gửi verify code. Lazy import + best-effort, silent fail.
+  if (newFriendshipStatus === 'accepted') {
+    try {
+      const { onFriendAcceptedForInternalContact } = await import(
+        '../system-notifications/internal-contact-handshake-hook.js'
+      );
+      await onFriendAcceptedForInternalContact({ orgId, zaloAccountId, zaloUidInNick });
+    } catch (err: any) {
+      // Hook không phải hot path — log debug, không block friend transition
+      logger.debug(`[internal-contact-hook] skipped: ${err?.message || err}`);
+    }
+  }
 }
 
 /**

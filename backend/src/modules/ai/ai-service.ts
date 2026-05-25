@@ -438,6 +438,127 @@ function rangesToStyles(text: string, rangesRaw: unknown): ZaloRichStyle[] {
   return styles;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Sales-to-sales handoff message (2026-05-22 v2) — anh chốt template cứng
+ * cho tab "🎯 CRM" widget "Đồng đội cùng chăm KH". Khi sale A click "AI nhắn
+ * sale B phối hợp" → assemble tin nội bộ theo template KHÔNG dùng AI (tránh
+ * bug AI fail lần 1, predictable output, không tốn quota).
+ *
+ * Template anh cho (2026-05-22):
+ *   "Anh/Chị {toSaleName} ơi, KH {khName} em đang chăm đã ở trạng thái
+ *    {status} và tương tác được Nhiệt {priorityScore}, điểm {leadScore} rồi.
+ *    [Có lịch hẹn {appt}] Em thấy KH này có tương tác với Anh/Chị ngày gần
+ *    nhất là {lastInteractionWithTarget}, Anh/Chị review lại KH này để mình
+ *    cùng chăm tìm phương án chuyển đổi nhé."
+ * ────────────────────────────────────────────────────────────────────────── */
+export type SalesHandoffInput = {
+  orgId: string;
+  fromSaleName: string;
+  toSaleName: string;
+  contact: {
+    displayName: string;
+    phone?: string | null;
+    statusLabel?: string | null;
+    priorityScore?: number | null;
+    leadScore?: number | null;
+    engagementPattern?: string | null;
+    nextAppointmentAt?: Date | null;
+    nextAppointmentLocation?: string | null;
+  };
+  targetActivity?: {
+    lastInboundAt?: Date | null;     // KH gửi tin cuối cho nick của target sale
+    lastOutboundAt?: Date | null;    // Target sale gửi tin cuối cho KH
+    lastInteractionAt?: Date | null; // Tổng quát (max(inbound, outbound))
+    totalInbound?: number;
+    totalOutbound?: number;
+  };
+};
+
+export type SalesHandoffResult = { content: string; source: 'template' };
+
+function formatVnDateTime(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm} ${hh}:${mi}`;
+}
+
+function relativeVnDays(d: Date): string {
+  const diffMs = Date.now() - d.getTime();
+  const days = Math.floor(diffMs / 86400000);
+  if (days <= 0) {
+    const hours = Math.max(1, Math.floor(diffMs / 3600000));
+    return `${hours} giờ trước`;
+  }
+  if (days === 1) return 'hôm qua';
+  return `${days} ngày trước`;
+}
+
+function patternLabel(p?: string | null): string {
+  switch (p) {
+    case 'hot': return 'nóng';
+    case 'champion': return 'champion';
+    case 'stable': return 'ổn định';
+    case 'cooling': return 'đang nguội';
+    case 'cold': return 'lạnh';
+    case 'noise': return 'chưa đủ data';
+    default: return '';
+  }
+}
+
+export function aiGenerateSalesHandoffMessage(input: SalesHandoffInput): SalesHandoffResult {
+  const t = input.targetActivity || {};
+
+  // Trạng thái: statusLabel (CRM status) hoặc engagementPattern
+  const statusText = input.contact.statusLabel?.trim()
+    || patternLabel(input.contact.engagementPattern)
+    || 'đang chăm';
+
+  // Số liệu Nhiệt + Điểm — chỉ thêm nếu có
+  const numBits: string[] = [];
+  if (input.contact.priorityScore != null) numBits.push(`Nhiệt ${input.contact.priorityScore}`);
+  if (input.contact.leadScore != null) numBits.push(`điểm ${input.contact.leadScore}`);
+  const numText = numBits.length ? ` và tương tác được ${numBits.join(', ')}` : '';
+
+  // Lịch hẹn (nếu có)
+  let apptText = '';
+  if (input.contact.nextAppointmentAt) {
+    const at = formatVnDateTime(input.contact.nextAppointmentAt);
+    const loc = input.contact.nextAppointmentLocation ? ` tại ${input.contact.nextAppointmentLocation}` : '';
+    apptText = ` KH có lịch hẹn vào ${at}${loc}.`;
+  }
+
+  // Lần tương tác gần nhất giữa target sale × KH
+  // Ưu tiên lastInteractionAt → lastInboundAt → lastOutboundAt
+  const lastTouch = t.lastInteractionAt || t.lastInboundAt || t.lastOutboundAt;
+  let touchText = '';
+  if (lastTouch) {
+    touchText = `Em thấy KH này có tương tác với Anh/Chị ngày gần nhất là ${relativeVnDays(lastTouch)}, `;
+  } else {
+    touchText = `Em thấy KH này chưa có nhiều tương tác với Anh/Chị, `;
+  }
+
+  const content = [
+    `Anh/Chị ${input.toSaleName} ơi, `,
+    `KH ${input.contact.displayName} em đang chăm đã ở trạng thái ${statusText}${numText} rồi.`,
+    apptText,
+    ` ${touchText}`,
+    `Anh/Chị review lại KH này để mình cùng chăm tìm phương án chuyển đổi nhé.`,
+  ].join('').replace(/\s+/g, ' ').trim();
+
+  // Save vào aiSuggestion để track (best-effort)
+  saveSuggestion({
+    orgId: input.orgId,
+    conversationId: 'system',
+    type: 'reply_draft',
+    content: JSON.stringify({ kind: 'sales_handoff', content }),
+    confidence: 1.0,
+  }).catch(() => {});
+
+  return { content, source: 'template' };
+}
+
 export async function aiFormatRichText(input: { orgId: string; rawText: string }): Promise<AiFormatResult> {
   const text = (input.rawText || '').toString();
   if (!text.trim()) return { text, styles: [], source: 'fallback' };

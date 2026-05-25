@@ -81,14 +81,14 @@
       <section v-if="privateNicks.length > 0" class="ptab-group">
         <div class="group-header"><span class="group-icon">🔒</span><span class="group-name">Nick Riêng tư</span><span class="group-count">{{ privateNicks.length }}</span></div>
         <div class="nick-list">
-          <NickRow v-for="n in privateNicks" :key="n.id" :nick="n" :is-internal-contact="internalContactId === n.id" :submitting="submittingId === n.id" @toggle="onToggleRequest(n)" @set-internal="onSetInternalContact(n)" />
+          <NickRow v-for="n in privateNicks" :key="n.id" :nick="n" :submitting="submittingId === n.id" @toggle="onToggleRequest(n)" />
         </div>
       </section>
 
       <section v-if="normalNicks.length > 0" class="ptab-group">
         <div class="group-header"><span class="group-icon">📭</span><span class="group-name">Nick Thường</span><span class="group-count">{{ normalNicks.length }}</span></div>
         <div class="nick-list">
-          <NickRow v-for="n in normalNicks" :key="n.id" :nick="n" :is-internal-contact="internalContactId === n.id" :submitting="submittingId === n.id" @toggle="onToggleRequest(n)" @set-internal="onSetInternalContact(n)" />
+          <NickRow v-for="n in normalNicks" :key="n.id" :nick="n" :submitting="submittingId === n.id" @toggle="onToggleRequest(n)" />
         </div>
       </section>
     </template>
@@ -127,7 +127,6 @@ const loading = ref(true);
 const submittingId = ref<string | null>(null);
 const errorMsg = ref('');
 const maxPrivacyNicks = ref(2);
-const internalContactId = ref<string | null>(null);
 
 const unlockOpen = ref(false);
 const setupOpen = ref(false);
@@ -199,12 +198,11 @@ async function loadAll() {
   try {
     const [myNicksRes, meContactRes] = await Promise.all([
       api.get<{ nicks: MyNick[] }>('/privacy/my-nicks'),
-      api.get<{ internalContactZaloAccountId: string | null; maxPrivacyNicks: number; autoDefaulted?: boolean }>('/me/internal-contact'),
+      api.get<{ maxPrivacyNicks: number }>('/me/internal-contact'),
       store.fetchStatus(true),
     ]);
     const list = Array.isArray(myNicksRes.data) ? myNicksRes.data : (myNicksRes.data?.nicks ?? []);
     nicks.value = list;
-    internalContactId.value = meContactRes.data.internalContactZaloAccountId;
     maxPrivacyNicks.value = meContactRes.data.maxPrivacyNicks;
   } catch (err: any) {
     errorMsg.value = err?.response?.data?.error || 'Không tải được danh sách nick';
@@ -273,21 +271,6 @@ async function onLock() {
   await store.lock();
 }
 
-async function onSetInternalContact(nick: MyNick) {
-  if (submittingId.value) return;
-  const newValue = internalContactId.value === nick.id ? null : nick.id;
-  submittingId.value = nick.id;
-  errorMsg.value = '';
-  try {
-    await api.patch('/me/internal-contact', { zaloAccountId: newValue });
-    internalContactId.value = newValue;
-  } catch (err: any) {
-    errorMsg.value = err?.response?.data?.error || 'Đặt nick liên lạc nội bộ thất bại';
-  } finally {
-    submittingId.value = null;
-  }
-}
-
 function parseBrowser(ua: string | null): string {
   if (!ua) return 'Trình duyệt khác';
   if (/coc[ _]?coc/i.test(ua)) return 'Cốc Cốc';
@@ -315,10 +298,9 @@ onUnmounted(() => {
 const NickRow = defineComponent({
   props: {
     nick: { type: Object as () => MyNick, required: true },
-    isInternalContact: { type: Boolean, default: false },
     submitting: { type: Boolean, default: false },
   },
-  emits: ['toggle', 'set-internal'],
+  emits: ['toggle'],
   setup(props, { emit }) {
     const initials = (name: string | null) => {
       if (!name) return '?';
@@ -350,19 +332,13 @@ const NickRow = defineComponent({
           n.avatarUrl ? h('img', { src: n.avatarUrl }) : initials(n.displayName),
         ]),
         h('div', { class: 'nr-info' }, [
-          h('div', { class: 'nr-name' }, [
-            n.displayName || 'Nick chưa đặt tên',
-            props.isInternalContact ? h('span', { class: 'nr-badge-internal', title: 'Nick liên lạc nội bộ của bạn' }, '🏠 Liên lạc nội bộ') : null,
-          ]),
+          h('div', { class: 'nr-name' }, [n.displayName || 'Nick chưa đặt tên']),
           h('div', { class: 'nr-meta' }, [
             h('span', { class: 'nr-dot', style: { background: stat.color } }),
             stat.label,
             n.zaloUid ? h('span', { class: 'nr-uid' }, [' · UID ' + n.zaloUid]) : null,
             n.friendCount > 0 ? h('span', { class: 'nr-uid' }, [' · 👥 ' + n.friendCount + ' bạn']) : null,
           ]),
-          !props.isInternalContact
-            ? h('button', { class: 'nr-set-internal', disabled: props.submitting, onClick: () => emit('set-internal') }, '🏠 Đặt làm nick liên lạc nội bộ')
-            : h('button', { class: 'nr-clear-internal', disabled: props.submitting, onClick: () => emit('set-internal') }, '✕ Bỏ liên lạc nội bộ'),
         ]),
         h('button', {
           class: ['nr-toggle', isMain ? 'on' : 'off'],

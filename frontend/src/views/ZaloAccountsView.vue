@@ -24,7 +24,8 @@
       </div>
     </div>
 
-    <!-- Phase Privacy v2 2026-05-23 — Tab strip: Quản lý nick / Riêng tư -->
+    <!-- Phase Privacy v2 2026-05-23 — Tab strip: Quản lý nick / Riêng tư
+         Phase Internal Contact 2-method 2026-05-23 — thêm tab "🏠 Liên lạc nội bộ" top-level -->
     <div class="za-tabs">
       <button
         class="za-tab"
@@ -41,6 +42,16 @@
         🔒 Riêng tư
         <span v-if="privacyCounter" class="za-tab-counter" :class="{ full: privacyCounter.atMax }">
           ({{ privacyCounter.used }}/{{ privacyCounter.max }})
+        </span>
+      </button>
+      <button
+        class="za-tab"
+        :class="{ active: activeTab === 'internal-contact' }"
+        @click="setTab('internal-contact')"
+      >
+        🏠 Liên lạc nội bộ
+        <span v-if="internalContactBadge" class="za-tab-counter" :class="{ full: !internalContactReady }">
+          {{ internalContactBadge }}
         </span>
       </button>
     </div>
@@ -133,6 +144,11 @@
     <!-- Tab content: privacy (Phase Privacy v2 2026-05-23) -->
     <template v-else-if="activeTab === 'privacy'">
       <PrivacyNicksTab />
+    </template>
+
+    <!-- Tab content: internal-contact (Phase Internal Contact 2-method 2026-05-23) -->
+    <template v-else-if="activeTab === 'internal-contact'">
+      <InternalContactSetupPage />
     </template>
 
     <!-- DETAIL DRAWER -->
@@ -250,6 +266,7 @@ import AccountDetailDrawer from '@/components/zalo-accounts/AccountDetailDrawer.
 import BulkActionBar from '@/components/zalo-accounts/BulkActionBar.vue';
 import OwnerReassignDrawer from '@/components/zalo-accounts/OwnerReassignDrawer.vue';
 import PrivacyNicksTab from '@/components/zalo-accounts/PrivacyNicksTab.vue';
+import InternalContactSetupPage from '@/components/zalo-accounts/InternalContactSetupPage.vue';
 import ZaloAccessDialog from '@/components/settings/ZaloAccessDialog.vue';
 import { api } from '@/api/index';
 import { useRoute, useRouter } from 'vue-router';
@@ -298,12 +315,33 @@ const lastRefreshLabel = computed(() => relativeTime(lastRefresh.value.toISOStri
 // Phase Privacy v2 2026-05-23 — Tab strip state + URL sync
 const route = useRoute();
 const router = useRouter();
-type TabKey = 'manage' | 'privacy';
-const activeTab = ref<TabKey>((route.query.tab as TabKey) === 'privacy' ? 'privacy' : 'manage');
+type TabKey = 'manage' | 'privacy' | 'internal-contact';
+const VALID_TABS: TabKey[] = ['manage', 'privacy', 'internal-contact'];
+const activeTab = ref<TabKey>(VALID_TABS.includes(route.query.tab as TabKey) ? (route.query.tab as TabKey) : 'manage');
 function setTab(t: TabKey) {
   activeTab.value = t;
   router.replace({ query: { ...route.query, tab: t === 'manage' ? undefined : t } });
   if (t === 'privacy') loadPrivacyCounter();
+  if (t === 'internal-contact') loadInternalContactBadge();
+}
+
+// Phase Internal Contact 2-method 2026-05-23 — badge "Chưa setup" / "✓" trên tab
+const internalContactBadge = ref<string>('');
+const internalContactReady = ref(false);
+async function loadInternalContactBadge() {
+  try {
+    const { data } = await api.get('/me/internal-contact');
+    if (data.recipient?.status === 'ready') {
+      internalContactBadge.value = '✓';
+      internalContactReady.value = true;
+    } else if (data.method) {
+      internalContactBadge.value = 'pending';
+      internalContactReady.value = false;
+    } else {
+      internalContactBadge.value = '!';
+      internalContactReady.value = false;
+    }
+  } catch { /* silent */ }
 }
 
 // Counter (N/max) hiển thị trên tab "Riêng tư"
@@ -561,7 +599,7 @@ async function handleDelete() {
 // ─────────────────────────────────────────────────────────────────
 onMounted(async () => {
   setupSocket();
-  await Promise.all([refreshAll(), fetchDeptTree(), loadPrivacyCounter()]);
+  await Promise.all([refreshAll(), fetchDeptTree(), loadPrivacyCounter(), loadInternalContactBadge()]);
   lastRefresh.value = new Date();
 
   // Light polling — refresh stats every 60s while page is open.

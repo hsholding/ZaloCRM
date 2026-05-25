@@ -12,6 +12,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'socket.io';
 import { applyContactAggregateFromMessage, applyFriendAggregate } from '../contacts/contact-aggregate.js';
+import { normalizePhone } from '../../shared/utils/phone.js';
 
 type QueryParams = Record<string, string>;
 
@@ -1061,6 +1062,140 @@ export async function chatRoutes(app: FastifyInstance) {
     });
 
     return { success: true };
+  });
+
+  // ── POST /chat/send-handoff ─ gửi tin nội bộ giữa 2 nick CRM (sale-to-sale). 2026-05-22 ─
+  // Dùng cho tab "🎯 CRM" widget "Đồng đội cùng chăm KH": sale A (đang online nick X)
+  // nhắn nick chính (target nick) của sale B đang cùng chăm KH này.
+  //
+  // Body: { senderZaloAccountId, targetUserId, content }
+  // Response: { success: true, zaloMsgId, targetNickName, targetZaloUidInSenderView }
+  //
+  // CỐT LÕI per-nick UID trap (memory ref):
+  //   Zalo UID là per-account perspective. ZaloAccount.zaloUid của Evo Sport là UID
+  //   Evo Sport tự xưng. Khi Thành Phạm gọi sendMessage(threadId=Evo-Sport-uid),
+  //   Zalo trả "Tham số không hợp lệ" vì sender không nhìn thấy threadId ấy.
+  //   Phải dùng Friend.zaloUidInNick (perspective sender → target identity).
+  //
+  // Lookup chain:
+  //   1. targetUserId → các ZaloAccount của user (ưu tiên main)
+  //   2. Mỗi target nick lấy phone → normalize
+  //   3. Tìm Contact phoneNormalized match trong org → Friend per (sender, contact)
+  //   4. Dùng Friend.zaloUidInNick làm threadId → sendMessage
+  //   5. Nếu không có match → báo lỗi rõ "sender chưa kết bạn nick target"
+  app.post('/api/v1/chat/send-handoff', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const body = request.body as { senderZaloAccountId?: string; targetUserId?: string; content?: string };
+    if (!body.senderZaloAccountId) return reply.status(400).send({ error: 'senderZaloAccountId required' });
+    if (!body.targetUserId) return reply.status(400).send({ error: 'targetUserId required' });
+    if (!body.content?.trim()) return reply.status(400).send({ error: 'content required' });
+    if (body.content.length > 2000) return reply.status(400).send({ error: 'Tin quá dài (tối đa 2000 ký tự)' });
+
+    // Verify sender nick thuộc cùng org + user có access
+    const senderNick = await prisma.zaloAccount.findFirst({
+      where: { id: body.senderZaloAccountId, orgId: user.orgId },
+      select: { id: true, ownerUserId: true, status: true, displayName: true },
+    });
+    if (!senderNick) return reply.status(404).send({ error: 'Sender nick not found' });
+
+    if (!['owner', 'admin'].includes(user.role)) {
+      const access = await prisma.zaloAccountAccess.findFirst({
+        where: { zaloAccountId: senderNick.id, userId: user.id },
+        select: { permission: true },
+      });
+      const isOwnerOfNick = senderNick.ownerUserId === user.id;
+      if (!access && !isOwnerOfNick) {
+        return reply.status(403).send({ error: 'Không có quyền gửi từ nick này' });
+      }
+    }
+
+    const instance = zaloPool.getInstance(senderNick.id);
+    if (!instance?.api) {
+      return reply.status(400).send({ error: 'Nick gửi chưa kết nối Zalo — vui lòng đăng nhập lại nick này' });
+    }
+
+    // Lấy danh sách nick của target sale, ưu tiên main, có zaloUid + phone
+    const targetNicks = await prisma.zaloAccount.findMany({
+      where: { orgId: user.orgId, ownerUserId: body.targetUserId, zaloUid: { not: null } },
+      orderBy: [{ privacyMode: 'asc' }, { lastConnectedAt: 'desc' }],
+      select: { id: true, zaloUid: true, displayName: true, phone: true },
+    });
+
+    if (!targetNicks.length) {
+      return reply.status(404).send({ error: 'Sale target chưa có nick Zalo đăng nhập CRM' });
+    }
+
+    // 2-tier lookup để có threadId hợp lệ (per-nick UID perspective):
+    //   Tier 1 — Friend.zaloUidInNick (sender đã kết bạn target qua Zalo)
+    //   Tier 2 — instance.api.findUser(phone) (sender chưa kết bạn, Zalo SDK resolve UID
+    //            cho perspective của sender. Tốn 1 Zalo API call nhưng OK vì handoff
+    //            không phải hot path.)
+    let threadId: string | null = null;
+    let targetNickName: string | null = null;
+    let lookupVia: 'friend' | 'findUser' | null = null;
+    for (const tn of targetNicks) {
+      const phone = normalizePhone(tn.phone);
+      if (!phone) continue;
+
+      // Tier 1: đã kết bạn → dùng Friend.zaloUidInNick (clean, không tốn Zalo API)
+      const friend = await prisma.friend.findFirst({
+        where: {
+          orgId: user.orgId,
+          zaloAccountId: senderNick.id,
+          contact: { phoneNormalized: phone },
+        },
+        select: { zaloUidInNick: true },
+      });
+      if (friend?.zaloUidInNick) {
+        threadId = friend.zaloUidInNick;
+        targetNickName = tn.displayName;
+        lookupVia = 'friend';
+        break;
+      }
+
+      // Tier 2: chưa kết bạn → findUser(phone) qua Zalo SDK
+      try {
+        const found = await (instance.api as unknown as { findUser?: (p: string) => Promise<{ uid?: string | number } | null> }).findUser?.(phone);
+        const uid = found?.uid != null ? String(found.uid) : null;
+        if (uid) {
+          threadId = uid;
+          targetNickName = tn.displayName;
+          lookupVia = 'findUser';
+          break;
+        }
+      } catch (e: unknown) {
+        logger.warn(`[chat/send-handoff] findUser fail phone=${phone}: ${(e as Error).message}`);
+      }
+    }
+
+    if (!threadId) {
+      return reply.status(404).send({
+        error: `Không tìm được nick Zalo của sale target — nick target có thể chưa có số điện thoại hoặc Zalo chặn search. Vui lòng kết bạn thủ công trước.`,
+      });
+    }
+
+    // Rate-limit gating
+    const limits = await zaloRateLimiter.checkLimits(senderNick.id);
+    if (!limits.allowed) return reply.status(429).send({ error: limits.reason });
+
+    try {
+      zaloRateLimiter.recordSend(senderNick.id);
+      const sendResult = await instance.api.sendMessage({ msg: body.content }, threadId, 0);
+      const sr = sendResult as unknown as { message?: { msgId?: number | string } | null };
+      const zaloMsgId = String(sr?.message?.msgId ?? '');
+      // Listener echo sẽ tự lưu Message + Conversation vào DB qua message-handler
+      return {
+        success: true,
+        zaloMsgId,
+        targetNickName,
+        targetZaloUidInSenderView: threadId,
+        lookupVia,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[chat/send-handoff] failed: ${msg}`);
+      return reply.status(500).send({ error: 'Gửi tin nội bộ thất bại — ' + msg });
+    }
   });
 
   // ── Move conversation to a different tab (main / other) ────────────────

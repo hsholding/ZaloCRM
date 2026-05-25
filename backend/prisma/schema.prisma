@@ -70,6 +70,8 @@ model Organization {
   // Admin pick bất kỳ nick connected. FK SET NULL khi nick bị xóa.
   systemNotifyZaloAccountId String?      @map("system_notify_zalo_account_id")
   systemNotifyNick          ZaloAccount? @relation("OrgSystemNotify", fields: [systemNotifyZaloAccountId], references: [id], onDelete: SetNull)
+  systemNotifyRecipients    SystemNotifyRecipient[]
+  systemNotifications       SystemNotification[]
 
   @@map("organizations")
 }
@@ -92,7 +94,9 @@ model User {
   id           String   @id @default(uuid())
   orgId        String   @map("org_id")
   teamId       String?  @map("team_id")
-  email        String   @unique
+  // Phase Onboarding v1 2026-05-24 — email optional (sale VN dùng SĐT là chính, ít/không có email).
+  // Unique partial: NULL không vi phạm constraint, 2 user cùng null OK.
+  email        String?  @unique
   passwordHash String   @map("password_hash")
   fullName     String   @map("full_name")
   // RBAC Phase Phân Quyền 2026-05-21: legacy `role` còn giữ cho dual-read window 2 tuần,
@@ -113,6 +117,28 @@ model User {
   // địa chỉ nhận system notification (miss KH msg, mention, alert). FK SET NULL khi reassign owner.
   internalContactZaloAccountId String? @map("internal_contact_zalo_account_id")
   internalContactNick          ZaloAccount? @relation("UserInternalContact", fields: [internalContactZaloAccountId], references: [id], onDelete: SetNull)
+  // Phase Internal Contact 2-method 2026-05-23 — sale chọn 1 trong 2 cách nhận system notification:
+  //   'crm_nick'       = dùng nick OWN (lưu ở internalContactZaloAccountId)
+  //   'personal_phone' = nhập SĐT Zalo cá nhân không có trong CRM (lưu ở internalContactPhone, normalize 84xxx)
+  // null = chưa setup. setupAt = lúc init handshake, confirmedAt = lúc gõ verify code đúng.
+  internalContactMethod        String?   @map("internal_contact_method")
+  internalContactPhone         String?   @map("internal_contact_phone")
+  internalContactSetupAt       DateTime? @map("internal_contact_setup_at")
+  internalContactConfirmedAt   DateTime? @map("internal_contact_confirmed_at")
+  // Phase Onboarding v1 2026-05-24 — first-run setup tracker.
+  // passwordChangedAt = null → FORCE đổi password lần đầu. User cũ backfill = createdAt.
+  // onboardingStepsCompleted = JSON map { step: ISO timestamp | 'skipped' }.
+  //   Keys: change_password, connect_nick, internal_contact, pin.
+  // onboardingDismissedAt = sale ẩn checklist → collapse thành mini indicator.
+  // jwtTokenVersion = bump khi đổi password → revoke JWT cũ (middleware check claim 'tv').
+  passwordChangedAt            DateTime? @map("password_changed_at")
+  onboardingStepsCompleted     Json?     @map("onboarding_steps_completed")
+  onboardingDismissedAt        DateTime? @map("onboarding_dismissed_at")
+  jwtTokenVersion              Int       @default(0) @map("jwt_token_version")
+  // Phase Onboarding v1 2026-05-24 — SĐT làm identifier đăng nhập chính cho sale VN.
+  // Sale ít/không dùng email → admin tạo user chỉ với phone + password tạm. Login chấp
+  // nhận cả email vừa phone (normalize 84xxx). Email vẫn giữ cho admin/owner + user cũ.
+  phone                        String?   @unique
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -142,6 +168,8 @@ model User {
   createdBroadcasts         AutomationBroadcast[]  @relation("BroadcastCreatedBy")
   // Phase metrics layer 2026-05-22 — phone search by user
   phoneSearchEvents         PhoneSearchEvent[]
+  systemNotifyRecipients    SystemNotifyRecipient[]
+  systemNotifications       SystemNotification[]
 
   @@map("users")
 }
@@ -197,6 +225,10 @@ model ZaloAccount {
   // Phase Privacy v2 2026-05-23 — reverse relations
   internalContactForUsers User[]         @relation("UserInternalContact")
   systemNotifyForOrgs     Organization[] @relation("OrgSystemNotify")
+  systemNotifyRecipientsAsSender   SystemNotifyRecipient[] @relation("SystemNotifySender")
+  systemNotifyRecipientsAsInternal SystemNotifyRecipient[] @relation("SystemNotifyInternalContact")
+  systemNotificationsAsSender      SystemNotification[]    @relation("SystemNotificationSender")
+  systemNotificationsAsInternal    SystemNotification[]    @relation("SystemNotificationInternalContact")
 
   @@map("zalo_accounts")
 }
@@ -570,6 +602,69 @@ model PhoneSearchEvent {
   @@index([orgId, occurredAt])
   @@index([phoneHash])
   @@map("phone_search_events")
+}
+
+model SystemNotifyRecipient {
+  id                           String   @id @default(uuid())
+  orgId                        String   @map("org_id")
+  targetUserId                 String   @map("target_user_id")
+  senderZaloAccountId          String?  @map("sender_zalo_account_id")
+  internalContactZaloAccountId String?  @map("internal_contact_zalo_account_id")
+  conversationId               String?  @map("conversation_id")
+  threadIdInSenderView         String?  @map("thread_id_in_sender_view")
+  status                       String   @default("invalid")
+  error                        String?
+  lastVerifiedAt               DateTime @default(now()) @map("last_verified_at")
+  // Phase Internal Contact 2-method 2026-05-23 — verify code 4 số sau handshake.
+  // Status flow mở rộng: pending_friend_request → pending_user_confirm → ready.
+  // verifyCode = hash 4 số sale phải gõ lại; expire 30 phút; lock sau 5 lần sai.
+  verifyCode                   String?   @map("verify_code")
+  verifyCodeExpiresAt          DateTime? @map("verify_code_expires_at")
+  verifyAttempts               Int       @default(0) @map("verify_attempts")
+  // Lưu request UID (UID của bên kia từ góc nhìn nick gửi friend request) để retry/cancel.
+  friendRequestSentAt          DateTime? @map("friend_request_sent_at")
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @updatedAt @map("updated_at")
+
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targetUser          User         @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  senderZaloAccount   ZaloAccount? @relation("SystemNotifySender", fields: [senderZaloAccountId], references: [id], onDelete: SetNull)
+  internalContactNick ZaloAccount? @relation("SystemNotifyInternalContact", fields: [internalContactZaloAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([targetUserId, senderZaloAccountId])
+  @@index([orgId, status])
+  @@index([senderZaloAccountId, status])
+  @@map("system_notify_recipients")
+}
+
+model SystemNotification {
+  id                           String    @id @default(uuid())
+  orgId                        String    @map("org_id")
+  type                         String
+  title                        String
+  content                      String    @db.Text
+  priority                     String    @default("normal")
+  senderZaloAccountId          String?   @map("sender_zalo_account_id")
+  targetUserId                 String    @map("target_user_id")
+  internalContactZaloAccountId String?   @map("internal_contact_zalo_account_id")
+  recipientId                  String?   @map("recipient_id")
+  conversationId               String?   @map("conversation_id")
+  channel                      String    @default("crm_panel")
+  status                       String    @default("pending")
+  zaloMsgId                    String?   @map("zalo_msg_id")
+  error                        String?
+  createdAt                    DateTime  @default(now()) @map("created_at")
+  sentAt                       DateTime? @map("sent_at")
+
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targetUser          User         @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  senderZaloAccount   ZaloAccount? @relation("SystemNotificationSender", fields: [senderZaloAccountId], references: [id], onDelete: SetNull)
+  internalContactNick ZaloAccount? @relation("SystemNotificationInternalContact", fields: [internalContactZaloAccountId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([targetUserId, createdAt(sort: Desc)])
+  @@index([orgId, status, createdAt(sort: Desc)])
+  @@map("system_notifications")
 }
 
 // Appointment scheduled for a contact

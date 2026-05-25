@@ -5,6 +5,11 @@
         <h1 class="hero-title">Nhân viên</h1>
         <p class="hero-sub">Quản lý người dùng tổ chức · Phân phòng ban · Gán nhóm quyền · Vô hiệu hóa khi nghỉ việc</p>
       </div>
+      <div class="hero-right" v-if="canCreateUser">
+        <button class="btn-primary" @click="openCreateDialog">
+          <span class="btn-icon">＋</span> Thêm nhân viên
+        </button>
+      </div>
     </header>
 
     <section class="stats-row" v-if="!loading && stats.total > 0">
@@ -61,7 +66,10 @@
     <div v-else-if="filteredUsers.length === 0 && store.users.length === 0" class="empty-state">
       <div class="empty-icon">👥</div>
       <h3>Chưa có nhân viên nào</h3>
-      <p>Thêm nhân viên qua trang đăng ký hoặc dùng admin endpoint.</p>
+      <p>Bấm "Thêm nhân viên" ở góc phải trên để tạo tài khoản đầu tiên.</p>
+      <button v-if="canCreateUser" class="btn-primary mt-3" @click="openCreateDialog">
+        <span class="btn-icon">＋</span> Thêm nhân viên đầu tiên
+      </button>
     </div>
 
     <div v-else-if="filteredUsers.length === 0" class="empty-state">
@@ -164,6 +172,80 @@
       @close="closePanel"
       @changed="onChanged"
     />
+
+    <!-- Phase Onboarding v1 2026-05-24 — Create user dialog -->
+    <div v-if="createOpen" class="create-overlay" @click.self="closeCreateDialog">
+      <div class="create-dialog">
+        <header class="create-head">
+          <h2>＋ Thêm nhân viên mới</h2>
+          <button class="create-close" @click="closeCreateDialog">✕</button>
+        </header>
+
+        <form class="create-form" @submit.prevent="onCreateUser">
+          <label class="create-label">
+            Họ tên <span class="req">*</span>
+            <input v-model="newUser.fullName" type="text" required placeholder="Vd: Nguyễn Văn A" />
+          </label>
+
+          <label class="create-label">
+            Số điện thoại <span class="req">*</span>
+            <input v-model="newUser.phone" type="tel" required placeholder="vd: 0987 654 321 (sale sẽ dùng SĐT này để login)" />
+            <small class="hint">📱 Sale VN thường dùng SĐT đăng nhập. Đây là identifier chính.</small>
+          </label>
+
+          <label class="create-label">
+            Email (tuỳ chọn)
+            <input v-model="newUser.email" type="email" placeholder="Bỏ trống nếu sale không có email" />
+            <small class="hint">💡 Optional — chỉ điền nếu sale có email công ty.</small>
+          </label>
+
+          <label class="create-label">
+            Mật khẩu tạm <span class="req">*</span>
+            <div class="pw-row">
+              <input v-model="newUser.password" :type="showPw ? 'text' : 'password'" required placeholder="≥ 6 ký tự — sale sẽ bắt buộc đổi lần đầu" />
+              <button type="button" class="pw-toggle" @click="showPw = !showPw">{{ showPw ? '🙈' : '👁' }}</button>
+              <button type="button" class="pw-gen" @click="generatePassword" title="Sinh password ngẫu nhiên">🎲</button>
+            </div>
+            <small class="hint">💡 Sau khi nhận password, sale sẽ bị bắt đổi sang password riêng ngay lần login đầu tiên.</small>
+          </label>
+
+          <label class="create-label">
+            Vai trò
+            <select v-model="newUser.role">
+              <option value="member">Nhân viên (member)</option>
+              <option value="admin" v-if="currentUserRole === 'owner'">Admin</option>
+            </select>
+          </label>
+
+          <div v-if="createError" class="create-error">⚠ {{ createError }}</div>
+
+          <div class="create-actions">
+            <button type="button" class="btn-cancel" @click="closeCreateDialog" :disabled="creating">Hủy</button>
+            <button type="submit" class="btn-primary" :disabled="creating || !canSubmit">
+              <span v-if="creating">⏳ Đang tạo...</span>
+              <span v-else>Tạo nhân viên</span>
+            </button>
+          </div>
+        </form>
+
+        <div v-if="createdUserInfo" class="create-success">
+          <div class="cs-icon">✅</div>
+          <h3>Đã tạo nhân viên!</h3>
+          <p>Gửi thông tin này cho <strong>{{ createdUserInfo.fullName }}</strong>:</p>
+          <div class="cs-credentials">
+            <div class="cs-row"><span>Link đăng nhập:</span> <code>{{ loginUrl }}</code></div>
+            <div v-if="createdUserInfo.phone" class="cs-row"><span>Số điện thoại:</span> <code>{{ createdUserInfo.phone }}</code></div>
+            <div v-if="createdUserInfo.email" class="cs-row"><span>Email:</span> <code>{{ createdUserInfo.email }}</code></div>
+            <div class="cs-row"><span>Mật khẩu tạm:</span> <code>{{ createdUserInfo.password }}</code></div>
+          </div>
+          <p class="cs-note">💡 Sau khi login lần đầu, sale sẽ bị bắt đổi password riêng.</p>
+          <div class="cs-actions">
+            <button class="btn-cancel" @click="copyCredentials">📋 Copy thông tin</button>
+            <button class="btn-primary" @click="closeCreateDialog">Đóng</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -177,6 +259,7 @@ import {
   type PermissionGroupNode,
 } from '@/stores/rbac';
 import { useAuthStore } from '@/stores/auth';
+import { api } from '@/api/index';
 import UserEditPanel from '@/components/rbac/UserEditPanel.vue';
 
 const store = useRbacStore();
@@ -192,6 +275,107 @@ const selectedUser = ref<RbacUser | null>(null);
 
 const currentUserId = computed(() => authStore.user?.id ?? '');
 const currentUserRole = computed(() => authStore.user?.role ?? 'member');
+
+// Phase Onboarding v1 2026-05-24 — Create user dialog state
+const canCreateUser = computed(() => ['owner', 'admin'].includes(currentUserRole.value));
+const createOpen = ref(false);
+const creating = ref(false);
+const createError = ref('');
+const showPw = ref(false);
+const createdUserInfo = ref<{ email: string | null; phone: string | null; fullName: string; password: string } | null>(null);
+const newUser = ref({
+  email: '',
+  phone: '',
+  fullName: '',
+  password: '',
+  role: 'member' as 'member' | 'admin',
+});
+const loginUrl = computed(() => window.location.origin + '/login');
+const canSubmit = computed(() =>
+  newUser.value.phone.trim() &&
+  newUser.value.fullName.trim() &&
+  newUser.value.password.length >= 6,
+);
+
+function openCreateDialog() {
+  newUser.value = { email: '', phone: '', fullName: '', password: '', role: 'member' };
+  createError.value = '';
+  createdUserInfo.value = null;
+  showPw.value = false;
+  createOpen.value = true;
+}
+
+function closeCreateDialog() {
+  if (creating.value) return;
+  createOpen.value = false;
+  // Refresh list nếu vừa tạo xong
+  if (createdUserInfo.value) {
+    void store.loadUsers();
+  }
+  createdUserInfo.value = null;
+}
+
+function generatePassword() {
+  // 8 ký tự: 1 hoa + 1 thường + 1 số + 5 random — sale sẽ bị đổi anyway
+  const upper = 'ABCDEFGHJKMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digit = '23456789';
+  const all = upper + lower + digit;
+  const rand = (s: string) => s[Math.floor(Math.random() * s.length)];
+  let pw = rand(upper) + rand(lower) + rand(digit);
+  for (let i = 0; i < 5; i++) pw += rand(all);
+  // Shuffle
+  newUser.value.password = pw.split('').sort(() => Math.random() - 0.5).join('');
+  showPw.value = true;
+}
+
+async function onCreateUser() {
+  if (!canSubmit.value) return;
+  creating.value = true;
+  createError.value = '';
+  try {
+    const emailTrim = newUser.value.email.trim().toLowerCase();
+    const phoneTrim = newUser.value.phone.trim();
+    await api.post('/users', {
+      email: emailTrim || undefined,
+      phone: phoneTrim || undefined,
+      fullName: newUser.value.fullName.trim(),
+      password: newUser.value.password,
+      role: newUser.value.role,
+    });
+    createdUserInfo.value = {
+      email: emailTrim || null,
+      phone: phoneTrim || null,
+      fullName: newUser.value.fullName.trim(),
+      password: newUser.value.password,
+    };
+  } catch (err: any) {
+    createError.value = err?.response?.data?.error || 'Tạo nhân viên thất bại';
+  } finally {
+    creating.value = false;
+  }
+}
+
+async function copyCredentials() {
+  if (!createdUserInfo.value) return;
+  const lines = [`Link đăng nhập: ${loginUrl.value}`];
+  if (createdUserInfo.value.phone) lines.push(`Số điện thoại: ${createdUserInfo.value.phone}`);
+  if (createdUserInfo.value.email) lines.push(`Email: ${createdUserInfo.value.email}`);
+  lines.push(`Mật khẩu tạm: ${createdUserInfo.value.password}`);
+  lines.push('');
+  lines.push('Sau khi login lần đầu, bạn sẽ được yêu cầu đổi mật khẩu sang mật khẩu riêng.');
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
 
 onMounted(async () => {
   await Promise.all([
@@ -479,4 +663,110 @@ function avatarColor(name: string): string {
   color: white;
   border-color: #181d26;
 }
+
+/* Phase Onboarding v1 2026-05-24 — Create user dialog + hero button */
+.page-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.hero-right { flex-shrink: 0; }
+
+.btn-primary {
+  background: #5E6AD2; color: white; border: none;
+  padding: 10px 18px; border-radius: 10px;
+  font-weight: 700; font-size: 13.5px; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background 0.15s;
+}
+.btn-primary:hover:not(:disabled) { background: #4F46E5; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-icon { font-size: 16px; font-weight: 700; }
+.mt-3 { margin-top: 12px; }
+
+.btn-cancel {
+  background: white; color: #374151; border: 1px solid #D1D5DB;
+  padding: 10px 18px; border-radius: 10px;
+  font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+.btn-cancel:hover:not(:disabled) { background: #F9FAFB; }
+.btn-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.create-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.create-dialog {
+  background: white; border-radius: 16px;
+  max-width: 480px; width: 100%;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
+  max-height: 90vh; overflow: auto;
+}
+.create-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 22px; border-bottom: 1px solid #E5E7EB;
+}
+.create-head h2 { margin: 0; font-size: 17px; font-weight: 700; color: #0F172A; }
+.create-close {
+  background: transparent; border: none; cursor: pointer;
+  color: #6B7280; font-size: 18px; font-weight: 700; font-family: inherit;
+  padding: 4px 10px; border-radius: 6px;
+}
+.create-close:hover { background: #F3F4F6; color: #DC2626; }
+
+.create-form { padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; }
+.create-label {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12.5px; font-weight: 600; color: #374151;
+}
+.create-label input, .create-label select {
+  padding: 10px 12px; border: 1.5px solid #E5E7EB; border-radius: 9px;
+  font-size: 14px; font-family: inherit; outline: none; transition: border-color 0.15s;
+}
+.create-label input:focus, .create-label select:focus { border-color: #5E6AD2; }
+.req { color: #DC2626; }
+
+.pw-row { display: flex; gap: 6px; align-items: center; }
+.pw-row input { flex: 1; }
+.pw-toggle, .pw-gen {
+  background: white; border: 1.5px solid #E5E7EB; border-radius: 8px;
+  width: 38px; height: 38px; cursor: pointer; font-size: 15px; font-family: inherit;
+  display: flex; align-items: center; justify-content: center;
+}
+.pw-toggle:hover, .pw-gen:hover { background: #F9FAFB; border-color: #C7D2FE; }
+
+.hint { color: #6B7280; font-size: 11.5px; font-weight: 400; line-height: 1.5; }
+
+.create-error {
+  background: #FEF2F2; color: #B91C1C; border: 1px solid #FCA5A5;
+  padding: 9px 13px; border-radius: 8px; font-size: 12.5px;
+}
+
+.create-actions { display: flex; gap: 10px; justify-content: flex-end; padding-top: 6px; }
+
+.create-success {
+  padding: 22px; display: flex; flex-direction: column; gap: 12px; align-items: center;
+  text-align: center;
+}
+.cs-icon {
+  width: 64px; height: 64px;
+  background: linear-gradient(135deg, #D1FAE5, #6EE7B7);
+  border-radius: 18px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 32px;
+}
+.create-success h3 { margin: 0; font-size: 18px; font-weight: 700; color: #047857; }
+.create-success p { margin: 0; font-size: 13.5px; color: #374151; }
+.cs-credentials {
+  width: 100%; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px;
+  padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.cs-row { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; flex-wrap: wrap; }
+.cs-row span { color: #6B7280; min-width: 110px; }
+.cs-row code {
+  background: white; padding: 3px 9px; border-radius: 5px;
+  border: 1px solid #E5E7EB; font-family: ui-monospace, monospace; font-size: 12px;
+  word-break: break-all; flex: 1;
+}
+.cs-note { font-size: 11.5px; color: #6B7280; font-style: italic; }
+.cs-actions { display: flex; gap: 10px; width: 100%; margin-top: 4px; }
+.cs-actions button { flex: 1; }
 </style>

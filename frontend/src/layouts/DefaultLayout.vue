@@ -114,10 +114,24 @@
       </v-menu>
     </header>
 
+    <!-- Phase Internal Contact 2-method 2026-05-23 — banner persistent nếu sale chưa setup -->
+    <div v-if="showInternalContactBanner" class="ic-banner">
+      <span class="ic-banner-icon">⚠</span>
+      <div class="ic-banner-text">
+        <strong>Bạn đang BỎ LỠ thông báo quan trọng từ CRM!</strong>
+        <span class="ic-banner-sub">Khách đồng ý kết bạn, cảnh báo silent 30 ngày, lịch hẹn, daily KPI...</span>
+      </div>
+      <button class="ic-banner-cta" @click="goSetupInternalContact">⚙ Thiết lập ngay</button>
+      <button class="ic-banner-dismiss" @click="dismissInternalContactBanner" title="Ẩn 24h">✕</button>
+    </div>
+
     <!-- ════════ MAIN ════════ -->
     <v-main class="smax-main">
       <slot />
     </v-main>
+
+    <!-- Phase Onboarding v1 2026-05-24 — floating indicator khi sale dismiss checklist hoặc 4/4 -->
+    <MiniOnboardingIndicator />
 
     <!-- Global toast queue -->
     <ToastContainer />
@@ -133,10 +147,42 @@ import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
 import ToastContainer from '@/components/ui/ToastContainer.vue';
+import MiniOnboardingIndicator from '@/components/onboarding/MiniOnboardingIndicator.vue';
+import { api } from '@/api/index';
 const theme = useTheme();
 const route = useRoute();
 const authStore = useAuthStore();
 const router = useRouter();
+
+// Phase Internal Contact 2-method 2026-05-23 — banner cho sale chưa setup
+// Phase Onboarding v1 redesign 2026-05-24: ẨN banner khi đang ở Dashboard route
+// vì OnboardingChecklist đã cover. Banner chỉ nhắc ở các tab khác (Chat, Bạn bè,...).
+const IC_BANNER_DISMISS_KEY = 'ic-banner-dismissed-until';
+const _showICBannerRaw = ref(false);
+const showInternalContactBanner = computed(() => {
+  // Hide trên Dashboard — checklist đã hiện
+  if (route.path === '/') return false;
+  return _showICBannerRaw.value;
+});
+async function checkInternalContactSetup() {
+  if (!authStore.user) return;
+  const dismissedUntil = Number(localStorage.getItem(IC_BANNER_DISMISS_KEY) || '0');
+  if (dismissedUntil > Date.now()) return;
+  try {
+    const { data } = await api.get('/me/internal-contact');
+    if (!data.method || data.recipient?.status !== 'ready') {
+      _showICBannerRaw.value = true;
+    }
+  } catch { /* silent */ }
+}
+function goSetupInternalContact() {
+  _showICBannerRaw.value = false;
+  router.push('/settings/channels/zalo?tab=internal-contact');
+}
+function dismissInternalContactBanner() {
+  _showICBannerRaw.value = false;
+  localStorage.setItem(IC_BANNER_DISMISS_KEY, String(Date.now() + 24 * 60 * 60 * 1000));
+}
 
 const isDark = ref((localStorage.getItem('theme') || 'smax-light') === 'legacy-dark');
 
@@ -144,6 +190,7 @@ onMounted(() => {
   const saved = localStorage.getItem('theme') || 'smax-light';
   theme.global.name.value = saved;
   isDark.value = saved === 'legacy-dark';
+  void checkInternalContactSetup();
 });
 
 interface NavTab {
@@ -212,6 +259,33 @@ function logout() {
 </script>
 
 <style scoped>
+/* Phase Internal Contact 2-method 2026-05-23 — banner persistent */
+.ic-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 20px;
+  background: linear-gradient(90deg, #FEF3C7 0%, #FDE68A 100%);
+  border-bottom: 1px solid #FCD34D;
+  color: #78350F;
+  font-size: 13.5px;
+}
+.ic-banner-icon { font-size: 20px; flex-shrink: 0; }
+.ic-banner-text { flex: 1; display: flex; flex-direction: column; gap: 2px; line-height: 1.3; }
+.ic-banner-text strong { color: #92400E; font-weight: 700; }
+.ic-banner-sub { font-size: 12px; color: #92400E; opacity: 0.85; }
+.ic-banner-cta {
+  background: #B45309; color: white; border: none;
+  padding: 8px 16px; border-radius: 8px;
+  font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit;
+  white-space: nowrap;
+}
+.ic-banner-cta:hover { background: #92400E; }
+.ic-banner-dismiss {
+  background: transparent; color: #92400E; border: none;
+  padding: 8px 10px; cursor: pointer; font-family: inherit;
+  font-size: 14px; font-weight: 700;
+}
+.ic-banner-dismiss:hover { color: #78350F; }
+
 .smax-topnav {
   background: var(--smax-header-bg);
   color: white;

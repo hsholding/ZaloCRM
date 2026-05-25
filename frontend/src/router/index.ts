@@ -14,6 +14,13 @@ const routes = [
     component: () => import('@/views/SetupView.vue'),
     meta: { layout: 'auth' },
   },
+  // Phase Onboarding v1 2026-05-24 — force change password lần đầu
+  {
+    path: '/setup-password',
+    name: 'SetupPassword',
+    component: () => import('@/views/ForcePasswordChangeView.vue'),
+    meta: { layout: 'auth', requiresAuth: true, allowUnchangedPassword: true },
+  },
   {
     path: '/',
     name: 'Dashboard',
@@ -79,6 +86,7 @@ const routes = [
 
       // 🏢 Org
       { path: 'org/profile', name: 'Settings.OrgProfile', component: () => import('@/components/settings/OrgSettings.vue') },
+      { path: 'org/system-notifications', name: 'Settings.SystemNotifications', component: () => import('@/views/settings/SystemNotificationsPage.vue') },
       { path: 'org/billing', name: 'Settings.Billing',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'billing' } },
       { path: 'org/audit',   name: 'Settings.Audit',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'audit' } },
 
@@ -230,6 +238,22 @@ router.beforeEach(async (to, _from, next) => {
       if (!authStore.isAuthenticated) {
         return next('/login');
       }
+    }
+    // Phase Onboarding v1 2026-05-24 — force change password lần đầu.
+    // passwordChangedAt = null → block tất cả route khác, ép sale qua /setup-password.
+    // allowUnchangedPassword cho phép /setup-password route bypass (chính nó).
+    if (
+      authStore.user?.passwordChangedAt === null &&
+      !to.meta.allowUnchangedPassword
+    ) {
+      return next('/setup-password');
+    }
+    // Ngược lại: nếu user đã đổi pw mà vẫn vào /setup-password → redirect dashboard
+    if (
+      authStore.user?.passwordChangedAt !== null &&
+      to.meta.allowUnchangedPassword
+    ) {
+      return next('/');
     }
   }
 

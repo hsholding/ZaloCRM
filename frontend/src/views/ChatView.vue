@@ -93,6 +93,7 @@
       :active-zalo-account-id="selectedConv.zaloAccount?.id ?? null"
       :friend-id="selectedConv.friendship?.id ?? null"
       :conversation-id="selectedConv.id ?? null"
+      :active-zalo-account-name="selectedConv.zaloAccount?.displayName ?? null"
       :ai-summary="aiSummary"
       :ai-summary-loading="aiSummaryLoading"
       :ai-sentiment="aiSentiment"
