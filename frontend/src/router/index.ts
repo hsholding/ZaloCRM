@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
 const routes = [
@@ -183,7 +183,7 @@ const routes = [
   { path: '/automation/bot/sequences',    redirect: '/marketing/sequences' },
   { path: '/automation/bot/broadcasts',   redirect: '/marketing/broadcasts' },
   { path: '/automation/bot/lists',        redirect: '/marketing/lists' },
-  { path: '/automation/bot/lists/:id',    redirect: (to) => `/marketing/lists/${to.params.id}` },
+  { path: '/automation/bot/lists/:id',    redirect: (to: RouteLocationNormalized) => `/marketing/lists/${to.params.id}` },
   {
     path: '/groups',
     name: 'Groups',
