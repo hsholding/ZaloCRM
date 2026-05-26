@@ -235,3 +235,101 @@ export async function reopenOnboarding(userId: string) {
   });
   return { ok: true };
 }
+
+export interface OnboardingSummary {
+  userId: string;
+  completedCount: number;
+  totalCount: number;
+  percent: number;
+  pendingSteps: OnboardingStep[];   // các step CHƯA done (loại pin nếu skipped)
+  changePassword: boolean;
+  connectNick: boolean;
+  internalContact: boolean;
+  pin: boolean;                     // true nếu đặt PIN hoặc đã skip
+  pinSkipped: boolean;
+  dismissed: boolean;
+}
+
+/**
+ * Bulk summary cho RBAC users list — 4 query thay vì N×4.
+ * Dùng cho admin xem cột "Onboarding %" của toàn org.
+ */
+export async function getOnboardingSummariesForOrg(orgId: string): Promise<Record<string, OnboardingSummary>> {
+  const users = await prisma.user.findMany({
+    where: { orgId },
+    select: {
+      id: true,
+      passwordChangedAt: true,
+      onboardingStepsCompleted: true,
+      onboardingDismissedAt: true,
+      privacyPinHash: true,
+    },
+  });
+  if (users.length === 0) return {};
+
+  const userIds = users.map((u) => u.id);
+
+  // Step 2: connect_nick — group COUNT nick connected per owner
+  const nickCounts = await prisma.zaloAccount.groupBy({
+    by: ['ownerUserId'],
+    where: { orgId, status: 'connected', ownerUserId: { in: userIds } },
+    _count: { _all: true },
+  });
+  const nickCountByUser = new Map<string, number>();
+  for (const row of nickCounts) {
+    if (row.ownerUserId) nickCountByUser.set(row.ownerUserId, row._count._all);
+  }
+
+  // Step 3: internal_contact — recipient.status='ready' trên nick system-notify của org
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { systemNotifyZaloAccountId: true },
+  });
+  const readyContactUserIds = new Set<string>();
+  if (org?.systemNotifyZaloAccountId) {
+    const recipients = await prisma.systemNotifyRecipient.findMany({
+      where: {
+        senderZaloAccountId: org.systemNotifyZaloAccountId,
+        targetUserId: { in: userIds },
+        status: 'ready',
+      },
+      select: { targetUserId: true },
+    });
+    for (const r of recipients) readyContactUserIds.add(r.targetUserId);
+  }
+
+  const result: Record<string, OnboardingSummary> = {};
+  for (const u of users) {
+    const stepsJson = (u.onboardingStepsCompleted as Record<string, string> | null) ?? {};
+    const changePassword = u.passwordChangedAt !== null;
+    const connectNick = (nickCountByUser.get(u.id) ?? 0) >= 1;
+    const internalContact = readyContactUserIds.has(u.id);
+    const pinSkipped = stepsJson.pin === 'skipped';
+    const pin = u.privacyPinHash !== null || pinSkipped;
+
+    const flags = [changePassword, connectNick, internalContact, pin];
+    const completedCount = flags.filter(Boolean).length;
+    const totalCount = 4;
+
+    const pendingSteps: OnboardingStep[] = [];
+    if (!changePassword) pendingSteps.push('change_password');
+    if (!connectNick) pendingSteps.push('connect_nick');
+    if (!internalContact) pendingSteps.push('internal_contact');
+    if (!pin) pendingSteps.push('pin');
+
+    result[u.id] = {
+      userId: u.id,
+      completedCount,
+      totalCount,
+      percent: Math.round((completedCount / totalCount) * 100),
+      pendingSteps,
+      changePassword,
+      connectNick,
+      internalContact,
+      pin,
+      pinSkipped,
+      dismissed: u.onboardingDismissedAt !== null,
+    };
+  }
+  return result;
+}

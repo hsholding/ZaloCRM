@@ -16,6 +16,7 @@ import fastifyJwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import fastifyMultipart from '@fastify/multipart';
+import fastifyFormbody from '@fastify/formbody';
 import { Server } from 'socket.io';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,6 +119,8 @@ async function bootstrap() {
       files: 10,
     },
   });
+
+  await app.register(fastifyFormbody);
 
   // Serve compiled frontend assets in production
   if (config.isProduction) {

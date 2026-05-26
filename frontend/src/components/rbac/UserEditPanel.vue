@@ -134,6 +134,43 @@
             </p>
           </section>
 
+          <!-- ── Onboarding (Phase Onboarding v1 2026-05-24) ── -->
+          <section v-if="user?.onboarding" class="section">
+            <div class="section-title-row">
+              <h3 class="section-title">Onboarding setup</h3>
+              <span class="ob-pct" :class="onboardingPctClass">
+                {{ user.onboarding.completedCount }}/{{ user.onboarding.totalCount }} · {{ user.onboarding.percent }}%
+              </span>
+            </div>
+            <ul class="ob-steplist">
+              <li class="ob-stepitem" :class="{ done: user.onboarding.changePassword }">
+                <span class="ob-mark">{{ user.onboarding.changePassword ? '✅' : '⬜' }}</span>
+                Đổi mật khẩu lần đầu
+              </li>
+              <li class="ob-stepitem" :class="{ done: user.onboarding.connectNick }">
+                <span class="ob-mark">{{ user.onboarding.connectNick ? '✅' : '⬜' }}</span>
+                Kết nối ≥ 1 nick Zalo
+              </li>
+              <li class="ob-stepitem" :class="{ done: user.onboarding.internalContact }">
+                <span class="ob-mark">{{ user.onboarding.internalContact ? '✅' : '⬜' }}</span>
+                Thiết lập nhận thông báo
+              </li>
+              <li
+                class="ob-stepitem"
+                :class="{ done: user.onboarding.pin && !user.onboarding.pinSkipped, skipped: user.onboarding.pinSkipped }"
+              >
+                <span class="ob-mark">
+                  {{ user.onboarding.pinSkipped ? '⊘' : (user.onboarding.pin ? '✅' : '⬜') }}
+                </span>
+                Đặt PIN bảo mật (tuỳ chọn)
+                <span v-if="user.onboarding.pinSkipped" class="ob-tag-mini">đã bỏ qua</span>
+              </li>
+            </ul>
+            <p v-if="user.onboarding.dismissed && user.onboarding.percent < 100" class="hint-soft" style="margin-top:8px">
+              User đã ẩn checklist nhưng vẫn chưa setup xong.
+            </p>
+          </section>
+
           <!-- ── Danger zone ─────────────────────── -->
           <section v-if="canDeactivate" class="section section-danger">
             <h3 class="section-title danger-title">Vùng nguy hiểm</h3>
@@ -212,6 +249,14 @@ const canEditInfo = computed(() => {
 });
 const canDeactivate = computed(() => {
   return props.currentUserRole === 'owner' && props.user?.id !== props.currentUserId;
+});
+
+// Phase Onboarding v1 2026-05-24 — màu pill % setup trong section header
+const onboardingPctClass = computed(() => {
+  const p = props.user?.onboarding?.percent ?? 0;
+  if (p === 100) return 'ob-pct-done';
+  if (p >= 50) return 'ob-pct-progress';
+  return 'ob-pct-pending';
 });
 
 const flatDepts = computed(() => {
@@ -483,4 +528,48 @@ function avatarColor(name: string): string {
   color: #0a2e0e;
 }
 .preview-desc { font-size: 11px; color: #41454d; margin: 0; line-height: 1.5; }
+
+/* Phase Onboarding v1 2026-05-24 — section trong UserEditPanel */
+.ob-pct {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 9999px;
+}
+.ob-pct-done     { background: #ECFDF5; color: #047857; }
+.ob-pct-progress { background: #FEF3C7; color: #92400E; }
+.ob-pct-pending  { background: #FEE2E2; color: #B91C1C; }
+
+.ob-steplist {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ob-stepitem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #41454d;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #f7f8fa;
+}
+.ob-stepitem.done { color: #0a2e0e; background: #ECFDF5; }
+.ob-stepitem.skipped { color: #9297a0; background: #f0f1f3; font-style: italic; }
+.ob-mark { width: 18px; text-align: center; }
+.ob-tag-mini {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9297a0;
+  background: white;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 </style>

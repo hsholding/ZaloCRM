@@ -90,6 +90,7 @@
             <th class="th-role">Chức vụ</th>
             <th class="th-group">Nhóm quyền</th>
             <th class="th-internal">🏠 Liên lạc nội bộ</th>
+            <th class="th-onboarding">🎯 Onboarding</th>
             <th class="th-status">Trạng thái</th>
             <th class="th-actions"></th>
           </tr>
@@ -150,6 +151,18 @@
                 🏠 {{ (u as any).internalContactNick.displayName || '(chưa đặt tên)' }}
               </RouterLink>
               <span v-else class="at-empty" :title="`Max ${(u as any).maxPrivacyNicks ?? 2} nick riêng tư`">—</span>
+            </td>
+            <td class="cell-onboarding">
+              <!-- Phase Onboarding v1 2026-05-24 — admin theo dõi % setup của sale -->
+              <span
+                v-if="u.onboarding"
+                class="at-chip"
+                :class="onboardingChipClass(u.onboarding)"
+                :title="onboardingTooltip(u.onboarding)"
+              >
+                {{ onboardingIcon(u.onboarding) }} {{ u.onboarding.completedCount }}/{{ u.onboarding.totalCount }}
+              </span>
+              <span v-else class="at-empty">—</span>
             </td>
             <td class="cell-status">
               <span v-if="u.isActive" class="at-chip chip-active">🟢 Hoạt động</span>
@@ -257,6 +270,7 @@ import {
   type RbacUser,
   type DepartmentNode,
   type PermissionGroupNode,
+  type OnboardingSummary,
 } from '@/stores/rbac';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/api/index';
@@ -472,6 +486,29 @@ function avatarColor(name: string): string {
   const h = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return colors[h % colors.length];
 }
+
+// Phase Onboarding v1 2026-05-24 — chip màu theo % setup
+function onboardingChipClass(s: OnboardingSummary): string {
+  if (s.percent === 100) return 'chip-onboarding-done';
+  if (s.percent >= 50) return 'chip-onboarding-progress';
+  return 'chip-onboarding-pending';
+}
+function onboardingIcon(s: OnboardingSummary): string {
+  if (s.percent === 100) return '✅';
+  if (s.changePassword === false) return '🔒'; // ưu tiên cảnh báo chưa đổi pw
+  return '🎯';
+}
+const STEP_LABEL_VI: Record<string, string> = {
+  change_password: 'Đổi mật khẩu',
+  connect_nick: 'Kết nối nick Zalo',
+  internal_contact: 'Thiết lập nhận thông báo',
+  pin: 'Đặt PIN bảo mật (tuỳ chọn)',
+};
+function onboardingTooltip(s: OnboardingSummary): string {
+  if (s.percent === 100) return 'Setup hoàn tất — sẵn sàng dùng CRM';
+  const pending = s.pendingSteps.map((k) => `• ${STEP_LABEL_VI[k] ?? k}`).join('\n');
+  return `Còn ${s.pendingSteps.length} bước:\n${pending}`;
+}
 </script>
 
 <style>
@@ -640,6 +677,12 @@ function avatarColor(name: string): string {
 .chip-internal:hover { background: #FDE68A; }
 .chip-active { background: #d8ecda; color: #0a2e0e; }
 .chip-inactive { background: #f0f1f3; color: #9297a0; }
+/* Phase Onboarding v1 2026-05-24 — chip % setup */
+.chip-onboarding-done     { background: #ECFDF5; color: #047857; }
+.chip-onboarding-progress { background: #FEF3C7; color: #92400E; }
+.chip-onboarding-pending  { background: #FEE2E2; color: #B91C1C; }
+.cell-onboarding { white-space: nowrap; }
+.th-onboarding   { white-space: nowrap; }
 
 .at-empty {
   color: #c9ccd1;

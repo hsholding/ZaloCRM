@@ -70,7 +70,15 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
       ? users.filter((u) => u.departmentMember?.departmentId === query.departmentId)
       : users;
 
-    return reply.send({ users: filtered });
+    // Phase Onboarding v1 2026-05-24 — admin theo dõi % setup của từng sale
+    const { getOnboardingSummariesForOrg } = await import('../auth/onboarding-service.js');
+    const summaries = await getOnboardingSummariesForOrg(user.orgId);
+    const withOnboarding = filtered.map((u) => ({
+      ...u,
+      onboarding: summaries[u.id] ?? null,
+    }));
+
+    return reply.send({ users: withOnboarding });
   });
 
   // PATCH /api/v1/rbac/users/:id/permission-group — gán user vào permission group

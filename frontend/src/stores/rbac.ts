@@ -36,6 +36,22 @@ export interface PermissionGroupNode {
   children: PermissionGroupNode[];
 }
 
+export type OnboardingStepKey = 'change_password' | 'connect_nick' | 'internal_contact' | 'pin';
+
+export interface OnboardingSummary {
+  userId: string;
+  completedCount: number;
+  totalCount: number;
+  percent: number;
+  pendingSteps: OnboardingStepKey[];
+  changePassword: boolean;
+  connectNick: boolean;
+  internalContact: boolean;
+  pin: boolean;
+  pinSkipped: boolean;
+  dismissed: boolean;
+}
+
 export interface RbacUser {
   id: string;
   email: string;
@@ -49,6 +65,7 @@ export interface RbacUser {
     department: { id: string; name: string; path: string };
   } | null;
   isActive: boolean;
+  onboarding?: OnboardingSummary | null;
 }
 
 export const useRbacStore = defineStore('rbac', {
