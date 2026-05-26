@@ -27,7 +27,11 @@ export type TriggerEventType =
   // Time-based
   | 'birthday'               // cron: contact's birthday today
   | 'scheduled_cron'         // arbitrary cron expression in triggerConfig
-  | 'time_elapsed'           // N days after some anchor event
+  | 'time_elapsed'           // N days after some anchor event (generic time delay)
+  // Wave 1 — engagement signals (chốt 2026-05-23)
+  | 'seen_no_reply'          // #12: KH đã xem tin sale + chưa rep sau N giờ
+  | 'silent_x_days'          // #13: KH lâu không tương tác — lastInboundAt < now-X
+  | 'lead_score_threshold'   // #14: leadScore vượt threshold (cross-up only)
   // Manual
   | 'manual_run'             // sale clicks "Run now" on segment
   // External
@@ -45,6 +49,9 @@ export const SUPPORTED_EVENT_TYPES: readonly TriggerEventType[] = [
   'birthday',
   'scheduled_cron',
   'time_elapsed',
+  'seen_no_reply',
+  'silent_x_days',
+  'lead_score_threshold',
   'manual_run',
   'order_success',
 ];
@@ -195,6 +202,30 @@ export const TRIGGER_CATALOG: TriggerCatalogEntry[] = [
     title: 'Theo lịch định kỳ',
     description: 'Cron expression tuỳ ý — broadcast hằng tuần, follow-up hằng tháng...',
     recommendedBinding: 'broadcast',
+  },
+  {
+    eventType: 'seen_no_reply',
+    category: 'general',
+    title: 'KH đã xem nhưng chưa rep',
+    description: 'Tin sale gửi đi đã được KH "seen" trên Zalo nhưng chưa có rep sau N giờ — re-warm cuộc trò chuyện. Cấu hình waitHours trong eventFilter (default 24).',
+    recommendedBinding: 'sequence',
+    suggestedActionTypes: ['send_message'],
+  },
+  {
+    eventType: 'silent_x_days',
+    category: 'general',
+    title: 'KH lâu không tương tác',
+    description: 'Contact.lastInboundAt cũ hơn X ngày — re-approach để giữ relationship warm. Cấu hình silenceDays trong eventFilter (default 30).',
+    recommendedBinding: 'sequence',
+    suggestedActionTypes: ['send_message'],
+  },
+  {
+    eventType: 'lead_score_threshold',
+    category: 'general',
+    title: 'Điểm Lead vượt ngưỡng',
+    description: 'Contact.leadScore cross-up qua threshold (vd 0→80) — hot lead cần follow-up nhanh. Cấu hình threshold trong eventFilter (default 80).',
+    recommendedBinding: 'sequence',
+    suggestedActionTypes: ['send_message', 'update_status'],
   },
   {
     eventType: 'manual_run',
