@@ -310,7 +310,10 @@
               'msg-privacy-blurred': privacyVisibility.shouldBlurMessage(item.msg, conversation),
               'msg-wrap-self': item.msg.senderType === 'self',
               'msg-wrap-other': item.msg.senderType !== 'self',
+              'msg-jump-highlight': jumpHighlightId === item.msg.id,
             }"
+            :data-msg-id="item.msg.id"
+            :data-zalo-msg-id="item.msg.zaloMsgId || ''"
             @click="privacyVisibility.shouldBlurMessage(item.msg, conversation) ? onMessageLockClick($event) : null"
           >
             <MessageBubble
@@ -329,6 +332,7 @@
               @callback="onMessageCallback(item.msg)"
               @open-profile="onOpenProfileFromCard"
               @open-reaction-detail="onOpenReactionDetail"
+              @jump-to-reply="jumpToReply"
             />
           </div>
         </template>
@@ -600,10 +604,10 @@
       :details="reactionPopupDetails"
     />
 
-    <!-- Privacy unlock popup — anh chốt 2026-05-22 v3 -->
-    <PrivacyUnlockDialog
-      v-model="privacyUnlockOpen"
-      :nick="privacyDialogNick"
+    <!-- Phase Privacy OTP 2026-05-27 — modal OTP thay PIN dialog cũ -->
+    <PrivacyUnlockOtpModal
+      :open="privacyUnlockOpen"
+      @close="privacyUnlockOpen = false"
       @unlocked="onPrivacyUnlocked"
     />
     <PrivacyViewerDialog
@@ -627,7 +631,8 @@ import MessageBubble from '@/components/chat/message-bubble.vue';
 import ReactionDetailPopup from '@/components/chat/reaction-detail-popup.vue';
 import { usePrivacyVisibility } from '@/composables/use-privacy-visibility';
 import NickAvatarLock from '@/components/privacy/NickAvatarLock.vue';
-import PrivacyUnlockDialog from '@/components/privacy/PrivacyUnlockDialog.vue';
+// Phase Privacy OTP 2026-05-27 — swap PIN dialog → OTP modal
+import PrivacyUnlockOtpModal from '@/components/privacy/PrivacyUnlockOtpModal.vue';
 import PrivacyViewerDialog from '@/components/privacy/PrivacyViewerDialog.vue';
 import { useAuthStore as _useAuthStorePriv } from '@/stores/auth';
 
@@ -826,6 +831,30 @@ const lastSelfMessageId = computed<string | null>(() => {
   }
   return null;
 });
+
+// ── Jump-to-quoted-message — click vào reply card → scroll tới tin gốc + highlight ─
+const jumpHighlightId = ref<string | null>(null);
+let jumpHighlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+function jumpToReply(replyMsgId: string) {
+  // replyMsgId là zaloMsgId (Snowflake từ Zalo) — match với message.zaloMsgId
+  const target = props.messages.find((m) => m.zaloMsgId === replyMsgId);
+  if (!target) {
+    toast.push('Tin gốc không có trong khung chat (có thể nằm ngoài 50 tin gần nhất)');
+    return;
+  }
+  // Tìm DOM element theo data-msg-id
+  const el = document.querySelector(`[data-msg-id="${target.id}"]`) as HTMLElement | null;
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Highlight trong 2s
+  jumpHighlightId.value = target.id;
+  if (jumpHighlightTimer) clearTimeout(jumpHighlightTimer);
+  jumpHighlightTimer = setTimeout(() => {
+    jumpHighlightId.value = null;
+    jumpHighlightTimer = null;
+  }, 2000);
+}
 
 // ── Header derived data (Avatar handles initials/gradient/gender) ──────────
 // B7 fix — Contact stub "Unknown" fallback chain qua zaloDisplayName Friend.
@@ -2083,6 +2112,16 @@ watch(() => props.editingMessage?.id, async (id) => {
   font-size: 12px;
   line-height: 1.45;
   color: var(--smax-grey-700, #6b7280);
+}
+
+/* Jump-to-quoted-message highlight — pulse border 2s khi user click reply card */
+.msg-bubble-wrap.msg-jump-highlight :deep(.message-bubble) {
+  animation: msg-jump-pulse 2s ease-out;
+}
+@keyframes msg-jump-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(41, 98, 255, 0.55); }
+  30%  { box-shadow: 0 0 0 4px rgba(41, 98, 255, 0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(41, 98, 255, 0); }
 }
 
 /* ════════ Privacy blur — message bubble (cột 3) ════════ */

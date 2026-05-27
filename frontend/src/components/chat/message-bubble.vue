@@ -44,7 +44,13 @@
         </div>
 
         <template v-else>
-          <div v-if="reply" class="reply-card">
+          <div
+            v-if="reply"
+            class="reply-card"
+            :class="{ 'reply-clickable': !!reply.msgId }"
+            :title="reply.msgId ? 'Đi tới tin nhắn gốc' : ''"
+            @click.stop="reply.msgId && emit('jump-to-reply', reply.msgId)"
+          >
             <div class="reply-header">
               <v-icon size="11" class="reply-icon">mdi-reply</v-icon>
               <span class="reply-sender">Trả lời{{ replySenderLabel ? ' ' + replySenderLabel : '' }}</span>
@@ -297,6 +303,7 @@ const emit = defineEmits<{
   callback: [message: Message];
   'open-profile': [uid: string];
   'open-reaction-detail': [payload: { reactions: any[]; message: Message }];
+  'jump-to-reply': [msgId: string];
 }>();
 
 const SPECIAL_TYPES = new Set([
@@ -839,7 +846,10 @@ function openFile(href: string) {
   background: rgba(33, 150, 243, 0.08);
   border-left: 3px solid var(--smax-primary, #2962ff);
   margin-bottom: 6px;
+  transition: background-color 0.15s ease;
 }
+.reply-card.reply-clickable { cursor: pointer; }
+.reply-card.reply-clickable:hover { background: rgba(33, 150, 243, 0.16); }
 .reply-header {
   display: flex; align-items: center; gap: 4px;
   font-size: 10.5px;
