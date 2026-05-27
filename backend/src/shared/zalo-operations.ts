@@ -47,6 +47,7 @@ interface ExecOptions {
   socketEvent?: string;        // event name to emit on success
   socketRoom?: string;         // room to emit to (default: org-level)
   socketPayload?: any;         // data to emit (merged with result)
+  suppressErrorLog?: (err: any) => boolean;
 }
 
 interface ZaloCredentials {
@@ -100,6 +101,15 @@ const SESSION_EXPIRED_PATTERNS = [
 function isSessionExpiredError(err: any): boolean {
   const msg = String(err?.message || err || '').toLowerCase();
   return SESSION_EXPIRED_PATTERNS.some(p => msg.includes(p));
+}
+
+function isMalformedJsonResponseError(err: any): boolean {
+  const msg = String(err?.message || err || '');
+  return (
+    msg.includes('Unexpected token') ||
+    msg.includes('Unexpected end of JSON input') ||
+    msg.includes('is not valid JSON')
+  );
 }
 
 // ── Core execution engine ───────────────────────────────────────────────────
@@ -191,7 +201,11 @@ async function exec<T>(opts: ExecOptions, fn: (api: any) => Promise<T>): Promise
 
   // Wrap unknown errors — preserve Zalo error code in message for diagnostics
   if (lastError instanceof ZaloOpError) throw lastError;
-  logger.error(`[zalo-ops:${accountId}] ${operation} failed:`, lastError);
+  if (opts.suppressErrorLog?.(lastError)) {
+    logger.debug(`[zalo-ops:${accountId}] ${operation} skipped noisy SDK error:`, lastError?.message ?? lastError);
+  } else {
+    logger.error(`[zalo-ops:${accountId}] ${operation} failed:`, lastError);
+  }
   const zaloCode = lastError?.code; // ZaloApiError exposes .code = Zalo error_code (e.g., 113, 222)
   const msg = lastError?.message || String(lastError);
 
@@ -520,8 +534,23 @@ async function findUser(accountId: string, query: string) {
 }
 
 async function getFriendOnlines(accountId: string) {
-  return exec({ accountId, category: 'friend_read', operation: 'getFriendOnlines' },
-    (api) => api.getFriendOnlines());
+  try {
+    return await exec(
+      {
+        accountId,
+        category: 'friend_read',
+        operation: 'getFriendOnlines',
+        suppressErrorLog: isMalformedJsonResponseError,
+      },
+      (api) => api.getFriendOnlines(),
+    );
+  } catch (err) {
+    if (isMalformedJsonResponseError(err)) {
+      logger.debug(`[zalo-ops:${accountId}] getFriendOnlines returned malformed SDK response; using empty presence list`);
+      return { onlines: [] };
+    }
+    throw err;
+  }
 }
 
 async function getFriendRecommendations(accountId: string) {
