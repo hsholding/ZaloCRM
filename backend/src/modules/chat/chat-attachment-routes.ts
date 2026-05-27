@@ -5,7 +5,7 @@
  */
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { writeFile, unlink, mkdir } from 'node:fs/promises';
+import { writeFile, unlink, mkdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Server } from 'socket.io';
@@ -15,7 +15,7 @@ import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
-import { sendNativeVideo } from '../../shared/video-processor.js';
+import { generateThumbnail, sendNativeVideo } from '../../shared/video-processor.js';
 import { uploadBuffer, type UploadResult } from '../../shared/storage/minio-client.js';
 import { logger } from '../../shared/utils/logger.js';
 
@@ -179,16 +179,28 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
         // Send videos one-by-one using native sendVideo
         for (const i of videoIndexes) {
           zaloRateLimiter.recordSend(conversation.zaloAccountId);
+          let generatedThumbnail: Awaited<ReturnType<typeof generateThumbnail>> | null = null;
+          let thumbnailMirror: UploadResult | null = null;
+          try {
+            generatedThumbnail = await generateThumbnail(tmpPaths[i]);
+            const thumbnailBuffer = await readFile(generatedThumbnail.path);
+            const baseName = path.parse(files[i].filename || 'video').name || 'video';
+            thumbnailMirror = await uploadBuffer(thumbnailBuffer, 'image/jpeg', `${baseName}-thumbnail.jpg`);
+          } catch (err) {
+            logger.warn('[chat-attachment] Video thumbnail generation failed:', err);
+          }
           try {
             const sendResult: any = await sendNativeVideo({
               api: instance.api as any,
               videoPath: tmpPaths[i],
+              thumbnailPath: generatedThumbnail?.path,
               threadId,
               threadType: threadType as 0 | 1,
               message: caption,
             });
             const zaloMsgId = String((sendResult as any)?.msgId || (sendResult as any)?.data?.msgId || '');
             const mirror = mirrors[i];
+            const thumbUrl = thumbnailMirror?.url ?? mirror.url;
             const msg = await prisma.message.create({
               data: {
                 id: randomUUID(),
@@ -198,7 +210,13 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
                 senderType: 'self',
                 senderUid: conversation.zaloAccount.zaloUid || '',
                 senderName: 'Staff',
-                content: JSON.stringify({ href: mirror.url, thumb: mirror.url, size: mirror.size }),
+                content: JSON.stringify({
+                  href: mirror.url,
+                  thumb: thumbUrl,
+                  thumbUrl,
+                  thumbnail: thumbUrl,
+                  size: mirror.size,
+                }),
                 contentType: 'video',
                 sentAt: new Date(),
                 repliedByUserId: user.id,
@@ -217,6 +235,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
             );
             const zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
             const mirror = mirrors[i];
+            const thumbUrl = thumbnailMirror?.url ?? mirror.url;
             const msg = await prisma.message.create({
               data: {
                 id: randomUUID(),
@@ -226,7 +245,13 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
                 senderType: 'self',
                 senderUid: conversation.zaloAccount.zaloUid || '',
                 senderName: 'Staff',
-                content: JSON.stringify({ href: mirror.url, thumb: mirror.url, size: mirror.size }),
+                content: JSON.stringify({
+                  href: mirror.url,
+                  thumb: thumbUrl,
+                  thumbUrl,
+                  thumbnail: thumbUrl,
+                  size: mirror.size,
+                }),
                 contentType: 'video',
                 sentAt: new Date(),
                 repliedByUserId: user.id,

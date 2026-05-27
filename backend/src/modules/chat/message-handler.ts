@@ -10,6 +10,8 @@ import { runAutomationRules } from '../automation/automation-service.js';
 import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendAggregate } from '../contacts/contact-aggregate.js';
 import { onInboundMessage as onInboundScoring, onOutboundMessage as onOutboundScoring } from '../scoring/scoring-hooks.js';
 import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
+import { uploadBuffer } from '../../shared/storage/minio-client.js';
+import { config } from '../../config/index.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -65,6 +67,164 @@ export interface HandleMessageResult {
   conversationId: string;
   orgId: string;
   contactId: string | null;
+}
+
+// ── v3.3 mirror inbound media — copy Zalo CDN URL về MinIO/S3/R2 ───────────
+// Inbound image/video/voice/file/gif: tin từ Zalo có URL CDN expire ngắn.
+// Mirror sang storage để bubble preview luôn-luôn-hiển-thị, không phụ thuộc CDN.
+
+const MIRROR_CONTENT_TYPES = new Set(['image', 'video', 'file', 'gif', 'voice', 'audio']);
+const MEDIA_URL_FIELDS = ['hdUrl', 'href', 'normalUrl', 'fileUrl', 'url', 'thumbUrl', 'thumb', 'thumbnail'] as const;
+
+function safeParseJsonObject(value: string): Record<string, unknown> | null {
+  if (!value.trim().startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLocalStorageUrl(value: string): boolean {
+  return value.startsWith(`${config.s3PublicUrl}/${config.s3Bucket}/`);
+}
+
+function isMirrorableUrl(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^https?:\/\//i.test(value) &&
+    !isLocalStorageUrl(value);
+}
+
+function fileNameFromUrl(url: string, contentType: string, mimeType: string): string {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (last.includes('.')) return decodeURIComponent(last);
+  } catch {
+    // fall through
+  }
+  const ext = mimeTypeToExtension(mimeType) || contentTypeToExtension(contentType);
+  return `zalo-${contentType || 'media'}${ext}`;
+}
+
+function mimeTypeToExtension(mimeType: string): string {
+  const [base] = mimeType.split(';');
+  switch (base.trim().toLowerCase()) {
+    case 'image/jpeg': return '.jpg';
+    case 'image/png': return '.png';
+    case 'image/webp': return '.webp';
+    case 'image/gif': return '.gif';
+    case 'video/mp4': return '.mp4';
+    case 'video/quicktime': return '.mov';
+    case 'video/webm': return '.webm';
+    case 'audio/mpeg': return '.mp3';
+    case 'audio/mp4': return '.m4a';
+    case 'audio/ogg': return '.ogg';
+    case 'application/pdf': return '.pdf';
+    default: return '';
+  }
+}
+
+function contentTypeToExtension(contentType: string): string {
+  switch (contentType) {
+    case 'image': return '.jpg';
+    case 'video': return '.mp4';
+    case 'gif': return '.gif';
+    case 'voice':
+    case 'audio': return '.mp3';
+    default: return '';
+  }
+}
+
+async function mirrorRemoteMediaUrl(url: string, contentType: string): Promise<string | null> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const mimeType = response.headers.get('content-type')?.split(';')[0] || guessMimeType(url, contentType);
+  const uploaded = await uploadBuffer(buffer, mimeType, fileNameFromUrl(url, contentType, mimeType));
+  return uploaded.url;
+}
+
+function guessMimeType(url: string, contentType: string): string {
+  const lower = url.toLowerCase();
+  if (lower.includes('.png')) return 'image/png';
+  if (lower.includes('.webp')) return 'image/webp';
+  if (lower.includes('.gif')) return 'image/gif';
+  if (lower.includes('.mp4')) return 'video/mp4';
+  if (lower.includes('.mov')) return 'video/quicktime';
+  if (lower.includes('.webm')) return 'video/webm';
+  if (lower.includes('.pdf')) return 'application/pdf';
+  if (contentType === 'image') return 'image/jpeg';
+  if (contentType === 'gif') return 'image/gif';
+  if (contentType === 'video') return 'video/mp4';
+  if (contentType === 'voice' || contentType === 'audio') return 'audio/mpeg';
+  return 'application/octet-stream';
+}
+
+async function mirrorInboundMediaContent(msg: IncomingMessage): Promise<string> {
+  if (!MIRROR_CONTENT_TYPES.has(msg.contentType) || !msg.content) return msg.content || '';
+
+  const parsed = safeParseJsonObject(msg.content);
+  if (!parsed) {
+    if (!isMirrorableUrl(msg.content)) return msg.content;
+    try {
+      return await mirrorRemoteMediaUrl(msg.content, msg.contentType) ?? msg.content;
+    } catch (err) {
+      logger.warn('[message-handler] inbound media mirror failed', {
+        contentType: msg.contentType,
+        url: msg.content,
+        err: (err as Error).message,
+      });
+      return msg.content;
+    }
+  }
+
+  const mirroredByUrl = new Map<string, string>();
+  for (const field of MEDIA_URL_FIELDS) {
+    const value = parsed[field];
+    if (!isMirrorableUrl(value)) continue;
+    try {
+      const mirrored = mirroredByUrl.get(value) ?? await mirrorRemoteMediaUrl(value, msg.contentType);
+      if (!mirrored) continue;
+      mirroredByUrl.set(value, mirrored);
+      parsed[field] = mirrored;
+    } catch (err) {
+      logger.warn('[message-handler] inbound media mirror failed', {
+        contentType: msg.contentType,
+        field,
+        url: value,
+        err: (err as Error).message,
+      });
+    }
+  }
+
+  const params = typeof parsed.params === 'string' ? safeParseJsonObject(parsed.params) : null;
+  if (params) {
+    for (const field of ['rawUrl', 'hd'] as const) {
+      const value = params[field];
+      if (!isMirrorableUrl(value)) continue;
+      try {
+        const mirrored = mirroredByUrl.get(value) ?? await mirrorRemoteMediaUrl(value, msg.contentType);
+        if (!mirrored) continue;
+        mirroredByUrl.set(value, mirrored);
+        params[field] = mirrored;
+      } catch (err) {
+        logger.warn('[message-handler] inbound media params mirror failed', {
+          contentType: msg.contentType,
+          field,
+          url: value,
+          err: (err as Error).message,
+        });
+      }
+    }
+    parsed.params = JSON.stringify(params);
+  }
+
+  return JSON.stringify(parsed);
 }
 
 export async function handleIncomingMessage(
@@ -139,6 +299,8 @@ export async function handleIncomingMessage(
       // zaloMsgIdNum = numeric form của Snowflake — primary sort key match Zalo Web.
       // Parse fail → null (CRM-sent in-flight messages chưa có msgId).
       const zaloMsgIdNum = msg.msgId && /^\d+$/.test(msg.msgId) ? BigInt(msg.msgId) : null;
+      // v3.3 mirror Zalo CDN → object storage (image/video/voice/file/gif)
+      const storedContent = await mirrorInboundMediaContent(msg);
       message = await prisma.message.create({
         data: {
           id: randomUUID(),
@@ -150,7 +312,7 @@ export async function handleIncomingMessage(
           senderType: msg.isSelf ? 'self' : 'contact',
           senderUid: msg.senderUid,
           senderName: msg.senderName || null,
-          content: msg.content || '',
+          content: storedContent || '',
           contentType: msg.contentType || 'text',
           attachments: msg.attachments ?? [],
           quote: msg.quote ?? undefined,
