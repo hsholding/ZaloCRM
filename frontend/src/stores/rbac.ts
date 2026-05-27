@@ -75,6 +75,13 @@ export interface RbacUser {
   internalContactPhone: string | null;
   internalContactZaloAccountId: string | null;
   internalContactNick: { id: string; displayName: string | null; avatarUrl: string | null; phone: string | null; zaloUid: string | null; status: string } | null;
+  // UI 2026-05-27 — handshake status từ SystemNotifyRecipient row mới nhất
+  //   ready                     → handshake đã verify
+  //   pending_friend_request    → đã gửi friend request, chờ accept
+  //   pending_user_confirm      → đã accept, chờ sale gõ mã 4 số
+  //   invalid / missing_internal_contact → chưa setup hoặc lỗi
+  recipientStatus: 'ready' | 'pending_friend_request' | 'pending_user_confirm' | 'invalid' | 'missing_internal_contact' | string | null;
+  recipientError: string | null;
   maxPrivacyNicks?: number;
   // Phase status 4-state 2026-05-27 — FE compute status từ 3 field này:
   //   - isActive=false → Vô hiệu

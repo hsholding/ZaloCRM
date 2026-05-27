@@ -161,29 +161,73 @@
               <span v-else class="at-empty">—</span>
             </td>
             <td class="cell-internal">
-              <!-- UI refactor 2026-05-27: 3 trường hợp
-                   1. Nick CRM → hiện SĐT của nick CRM
-                   2. Personal phone (Zalo ngoài CRM) → hiện SĐT + tag "Zalo ngoài"
-                   3. Chưa setup → "—" -->
+              <!-- UI 2026-05-27 — 7 trạng thái Liên lạc nội bộ:
+                   1. crm_nick + ready                       → SĐT nick CRM
+                   2. personal_phone + ready                 → SĐT + tag "Zalo ngoài"
+                   3. recipientStatus=ready, method=null     → SĐT user (handshake admin tạo)
+                   4. recipientStatus=pending_friend_request → "⏳ Chờ KB"
+                   5. recipientStatus=pending_user_confirm   → "🔐 Chờ mã verify"
+                   6. recipientStatus=invalid/error          → "⚠ Lỗi"
+                   7. else                                   → "—" -->
+              <!-- Case 1: nick CRM (đã verify ready) -->
               <RouterLink
-                v-if="u.internalContactNick"
+                v-if="u.internalContactNick && u.recipientStatus === 'ready'"
                 :to="'/settings/channels/zalo?tab=internal-contact'"
                 class="at-chip chip-internal"
                 @click.stop
-                :title="`Nick CRM: ${u.internalContactNick.displayName || '(chưa đặt tên)'}`"
+                :title="`Nick CRM: ${u.internalContactNick.displayName || '(chưa đặt tên)'} · Đã verify`"
               >
                 <code>{{ formatPhoneDisplay(u.internalContactNick.phone) || '(thiếu SĐT)' }}</code>
               </RouterLink>
+              <!-- Case 2: personal phone (Zalo ngoài) đã ready -->
               <span
-                v-else-if="u.internalContactMethod === 'personal_phone' && u.internalContactPhone"
+                v-else-if="u.internalContactMethod === 'personal_phone' && u.internalContactPhone && u.recipientStatus === 'ready'"
                 class="at-chip chip-internal-external"
-                :title="`Zalo cá nhân của sale, không có nick trong CRM`"
+                :title="`Zalo cá nhân của sale, không có nick trong CRM · Đã verify`"
                 @click.stop
               >
                 <code>{{ formatPhoneDisplay(u.internalContactPhone) }}</code>
                 <span class="tag-zalo-ngoai">Zalo ngoài</span>
               </span>
-              <span v-else class="at-empty" :title="`Max ${u.maxPrivacyNicks ?? 2} nick riêng tư`">—</span>
+              <!-- Case 3: handshake admin tạo (recipient=ready nhưng User.method=null) -->
+              <span
+                v-else-if="u.recipientStatus === 'ready' && u.phone"
+                class="at-chip chip-internal-instant"
+                :title="`Admin tạo qua Zalo · Handshake xong, sẵn sàng nhận thông báo`"
+                @click.stop
+              >
+                <code>{{ formatPhoneDisplay(u.phone) }}</code>
+                <span class="tag-instant">✓ Sẵn sàng</span>
+              </span>
+              <!-- Case 4: chờ accept friend request -->
+              <span
+                v-else-if="u.recipientStatus === 'pending_friend_request'"
+                class="at-chip chip-internal-pending"
+                :title="`Đã gửi yêu cầu kết bạn từ nick CRM, chờ sale accept`"
+                @click.stop
+              >
+                ⏳ Chờ KB
+              </span>
+              <!-- Case 5: chờ verify code 4 số -->
+              <span
+                v-else-if="u.recipientStatus === 'pending_user_confirm'"
+                class="at-chip chip-internal-verifying"
+                :title="`Sale đã accept, đang chờ gõ mã verify 4 số`"
+                @click.stop
+              >
+                🔐 Chờ mã
+              </span>
+              <!-- Case 6: lỗi -->
+              <span
+                v-else-if="u.recipientStatus && u.recipientStatus !== 'missing_internal_contact' && u.recipientError"
+                class="at-chip chip-internal-error"
+                :title="u.recipientError || 'Lỗi setup liên lạc nội bộ'"
+                @click.stop
+              >
+                ⚠ Lỗi
+              </span>
+              <!-- Case 7: chưa setup -->
+              <span v-else class="at-empty" :title="`Sale chưa thiết lập liên lạc nội bộ`">—</span>
             </td>
             <td class="cell-onboarding">
               <!-- Phase Onboarding v1 2026-05-24 — admin theo dõi % setup của sale -->
@@ -810,6 +854,69 @@ function onboardingTooltip(s: OnboardingSummary): string {
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+
+/* UI 2026-05-27 — 4 chip mới cho 7 trạng thái Liên lạc nội bộ */
+.chip-internal-instant {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #ECFDF5;
+  border: 1px solid #10B98155;
+  font-size: 12px;
+}
+.chip-internal-instant code {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  background: transparent;
+  color: #047857;
+}
+.tag-instant {
+  font-size: 10px;
+  font-weight: 600;
+  background: #10B981;
+  color: white;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.2px;
+}
+
+.chip-internal-pending {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: #FEF3C7;
+  border: 1px solid #F59E0B55;
+  color: #92400E;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chip-internal-verifying {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: #DBEAFE;
+  border: 1px solid #3B82F655;
+  color: #1E40AF;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chip-internal-error {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: #FEE2E2;
+  border: 1px solid #EF444455;
+  color: #B91C1C;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: help;
 }
 
 .toggle-email-btn {

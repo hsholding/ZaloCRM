@@ -71,6 +71,16 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
         internalContactNick: {
           select: { id: true, displayName: true, avatarUrl: true, phone: true, zaloUid: true, status: true },
         },
+        // UI 2026-05-27 — handshake status từ SystemNotifyRecipient (1 row per (user × sender nick)).
+        // Cột "Liên lạc nội bộ" render 7 trạng thái dựa vào field này:
+        //   ready / pending_friend_request / pending_user_confirm / invalid / missing_internal_contact
+        // Workflow "Tạo nhân viên qua Zalo" cũng tạo recipient ready ngay → FE biết handshake thành công
+        // dù User.internalContactMethod chưa được sync ngược.
+        systemNotifyRecipients: {
+          select: { status: true, error: true, friendRequestSentAt: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+        },
         isActive: true,
       },
       orderBy: { fullName: 'asc' },
@@ -84,10 +94,17 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
     // Phase Onboarding v1 2026-05-24 — admin theo dõi % setup của từng sale
     const { getOnboardingSummariesForOrg } = await import('../auth/onboarding-service.js');
     const summaries = await getOnboardingSummariesForOrg(user.orgId);
-    const withOnboarding = filtered.map((u) => ({
-      ...u,
-      onboarding: summaries[u.id] ?? null,
-    }));
+    const withOnboarding = filtered.map((u) => {
+      // Flatten recipient (1 latest row) thành 2 field phẳng cho FE dễ render
+      const recipient = u.systemNotifyRecipients?.[0] ?? null;
+      const { systemNotifyRecipients: _drop, ...rest } = u as any;
+      return {
+        ...rest,
+        recipientStatus: recipient?.status ?? null,
+        recipientError: recipient?.error ?? null,
+        onboarding: summaries[u.id] ?? null,
+      };
+    });
 
     return reply.send({ users: withOnboarding });
   });
