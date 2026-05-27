@@ -7,6 +7,9 @@ import { zaloOps } from '../../shared/zalo-operations.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { requireRole } from '../auth/role-middleware.js';
 import { resolveSystemNotifyRecipient, sendSystemNotificationToUser } from './system-notify-service.js';
+import { DEFAULT_WELCOME_TEMPLATE, buildWelcomeMessage, validateTemplate } from './welcome-message-builder.js';
+import { uploadBuffer } from '../../shared/storage/minio-client.js';
+import { config } from '../../config/index.js';
 
 function hashPhone(phone: string): string {
   return createHash('sha256').update(phone.trim()).digest('hex');
@@ -327,6 +330,153 @@ export async function systemNotifyRoutes(app: FastifyInstance): Promise<void> {
       });
 
       return { ok: notification.status === 'sent', notification };
+    },
+  );
+
+  // ── Org config: welcome message template + image + admin fallback phone ──
+  // Phase user-create-with-zalo 2026-05-27. Dùng chung trang Thông báo hệ thống,
+  // admin sửa template + upload ảnh + nhập SĐT admin fallback.
+
+  app.get(
+    '/api/v1/system-notifications/org-config',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest) => {
+      const currentUser = request.user!;
+      const org = await prisma.organization.findUnique({
+        where: { id: currentUser.orgId },
+        select: {
+          welcomeMessageTemplate: true,
+          welcomeImageUrl: true,
+          adminFallbackPhone: true,
+        },
+      });
+      return {
+        welcomeMessageTemplate: org?.welcomeMessageTemplate ?? null,
+        welcomeImageUrl: org?.welcomeImageUrl ?? null,
+        adminFallbackPhone: org?.adminFallbackPhone ?? null,
+        defaultTemplate: DEFAULT_WELCOME_TEMPLATE,
+      };
+    },
+  );
+
+  app.patch(
+    '/api/v1/system-notifications/org-config',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = request.user!;
+      const body = (request.body ?? {}) as {
+        welcomeMessageTemplate?: string | null;
+        welcomeImageUrl?: string | null;
+        adminFallbackPhone?: string | null;
+      };
+
+      const data: Record<string, string | null> = {};
+      if (Object.prototype.hasOwnProperty.call(body, 'welcomeMessageTemplate')) {
+        const tpl = body.welcomeMessageTemplate;
+        if (tpl !== null && tpl !== undefined) {
+          if (typeof tpl !== 'string' || tpl.length > 4000) {
+            return reply.status(400).send({ error: 'Template phải là string ≤ 4000 ký tự' });
+          }
+          const errors = validateTemplate(tpl);
+          if (errors.length > 0) {
+            return reply.status(400).send({ error: errors.join('; ') });
+          }
+        }
+        data.welcomeMessageTemplate = tpl ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'welcomeImageUrl')) {
+        const url = body.welcomeImageUrl;
+        // FIX codex LOW-8: chỉ cho phép URL từ MinIO public CDN (do BE tự upload), không phải URL bất kỳ.
+        // Null/empty = xoá ảnh, OK.
+        if (url !== null && url !== undefined && url !== '') {
+          if (typeof url !== 'string' || !url.startsWith(config.s3PublicUrl)) {
+            return reply.status(400).send({ error: 'welcomeImageUrl phải là URL MinIO của hệ thống (upload qua /welcome-image)' });
+          }
+        }
+        data.welcomeImageUrl = url || null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'adminFallbackPhone')) {
+        const phone = body.adminFallbackPhone;
+        if (phone !== null && phone !== undefined && phone !== '') {
+          const norm = normalizePhone(String(phone));
+          if (!norm) {
+            return reply.status(400).send({ error: 'SĐT admin fallback không hợp lệ' });
+          }
+          data.adminFallbackPhone = norm;
+        } else {
+          data.adminFallbackPhone = null;
+        }
+      }
+
+      await prisma.organization.update({
+        where: { id: currentUser.orgId },
+        data,
+      });
+      return { ok: true };
+    },
+  );
+
+  app.post(
+    '/api/v1/system-notifications/welcome-image',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const currentUser = request.user!;
+      try {
+        for await (const part of request.parts()) {
+          if (part.type === 'file' && part.fieldname === 'image') {
+            if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(part.mimetype)) {
+              return reply.status(415).send({ error: `Mime không support: ${part.mimetype}` });
+            }
+            const buf = await part.toBuffer();
+            if (buf.length > 5 * 1024 * 1024) {
+              return reply.status(413).send({ error: 'Ảnh quá 5MB' });
+            }
+            const result = await uploadBuffer(buf, part.mimetype, part.filename);
+            await prisma.organization.update({
+              where: { id: currentUser.orgId },
+              data: { welcomeImageUrl: result.url },
+            });
+            return { ok: true, url: result.url };
+          }
+        }
+      } catch (err) {
+        return reply.status(400).send({ error: `Upload fail: ${(err as Error)?.message}` });
+      }
+      return reply.status(400).send({ error: 'Không tìm thấy field "image" trong multipart' });
+    },
+  );
+
+  app.post(
+    '/api/v1/system-notifications/preview-welcome',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest) => {
+      const currentUser = request.user!;
+      const body = (request.body ?? {}) as {
+        templateOverride?: string;
+        variant?: 'friend' | 'stranger';
+      };
+      const org = await prisma.organization.findUnique({
+        where: { id: currentUser.orgId },
+        select: { name: true, welcomeMessageTemplate: true, welcomeImageUrl: true, adminFallbackPhone: true },
+      });
+      const template = body.templateOverride ?? org?.welcomeMessageTemplate ?? null;
+      const payload = buildWelcomeMessage(template, {
+        fullName: 'Nguyễn Văn A',
+        email: 'nguyenvana@example.com',
+        phone: '0931536109',
+        password: 'a3k7p9',
+        loginUrl: process.env.CRM_LOGIN_URL || 'https://crm.hsholding.vn',
+        orgName: org?.name ?? 'Tổ chức',
+        departmentName: 'Phòng Kinh Doanh',
+        roleName: 'Nhân viên Sale',
+        adminPhone: org?.adminFallbackPhone ?? '0908278807',
+        variant: body.variant ?? 'stranger',
+      }, { welcomeImagePath: org?.welcomeImageUrl ?? null });
+      return {
+        text: payload.formatted.text,
+        styles: payload.formatted.styles,
+        attachments: payload.attachments,
+      };
     },
   );
 }

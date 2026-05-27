@@ -45,11 +45,13 @@
         </span>
       </button>
       <button
+        v-if="isAdmin"
         class="za-tab"
         :class="{ active: activeTab === 'internal-contact' }"
         @click="setTab('internal-contact')"
+        title="Chỉ admin/owner — sale không truy cập tab này. Dùng để sửa nick nhận thông báo sau khi đã tạo user."
       >
-        🏠 Liên lạc nội bộ
+        🏠 Sửa nick nhận thông báo
         <span v-if="internalContactBadge" class="za-tab-counter" :class="{ full: !internalContactReady }">
           {{ internalContactBadge }}
         </span>
@@ -146,9 +148,19 @@
       <PrivacyNicksTab />
     </template>
 
-    <!-- Tab content: internal-contact (Phase Internal Contact 2-method 2026-05-23) -->
-    <template v-else-if="activeTab === 'internal-contact'">
+    <!-- Tab content: internal-contact (Phase Internal Contact 2-method 2026-05-23)
+         Phase user-create-with-zalo 2026-05-27: ADMIN ONLY (sale không sửa nick nhận thông báo,
+         admin sẽ sửa cho sale khi cần). Gate ở tab button + safeguard fallback nếu URL hack. -->
+    <template v-else-if="activeTab === 'internal-contact' && isAdmin">
       <InternalContactSetupPage />
+    </template>
+    <template v-else-if="activeTab === 'internal-contact' && !isAdmin">
+      <div class="za-locked-tab">
+        <div class="za-locked-icon">🔒</div>
+        <h3>Chỉ admin có quyền sửa nick nhận thông báo</h3>
+        <p>Liên hệ admin để cập nhật. Sale không được tự sửa để tránh sai thông tin nhận login + thông báo hệ thống.</p>
+        <button class="btn-primary" @click="setTab('manage')">← Quay lại Quản lý nick</button>
+      </div>
     </template>
 
     <!-- DETAIL DRAWER -->
@@ -270,6 +282,7 @@ import InternalContactSetupPage from '@/components/zalo-accounts/InternalContact
 import ZaloAccessDialog from '@/components/settings/ZaloAccessDialog.vue';
 import { api } from '@/api/index';
 import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 import type { EnrichedAccount } from '@/composables/use-zalo-accounts-dashboard';
 
 const dash = useZaloAccountsDashboard();
@@ -315,6 +328,8 @@ const lastRefreshLabel = computed(() => relativeTime(lastRefresh.value.toISOStri
 // Phase Privacy v2 2026-05-23 — Tab strip state + URL sync
 const route = useRoute();
 const router = useRouter();
+const authStore = useAuthStore();
+const isAdmin = computed(() => ['owner', 'admin'].includes(authStore.user?.role ?? 'member'));
 type TabKey = 'manage' | 'privacy' | 'internal-contact';
 const VALID_TABS: TabKey[] = ['manage', 'privacy', 'internal-contact'];
 const activeTab = ref<TabKey>(VALID_TABS.includes(route.query.tab as TabKey) ? (route.query.tab as TabKey) : 'manage');

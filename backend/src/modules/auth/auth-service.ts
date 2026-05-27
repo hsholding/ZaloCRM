@@ -115,6 +115,12 @@ export async function login(identifier: string, password: string): Promise<JwtPa
     throw err;
   }
 
+  // Phase status 4-state 2026-05-27 — set lastLoginAt async (fire-and-forget) cho status compute.
+  // KHÔNG block login response — nếu update fail thì im lặng (status compute sẽ thấy null vẫn OK).
+  prisma.user
+    .update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
+    .catch(() => {});
+
   return {
     id: user.id,
     // Email có thể null cho sale chỉ có phone → fallback phone vào claim email cho legacy code đọc

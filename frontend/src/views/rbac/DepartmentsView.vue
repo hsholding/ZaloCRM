@@ -145,7 +145,7 @@ onMounted(async () => {
 
 const userNameMap = computed(() => {
   const m = new Map<string, string>();
-  for (const u of allUsers.value) m.set(u.id, u.fullName || u.email);
+  for (const u of allUsers.value) m.set(u.id, u.fullName || u.email || u.phone || '(?)');
   return m;
 });
 

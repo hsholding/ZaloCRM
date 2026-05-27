@@ -153,6 +153,12 @@ model User {
   // Sale ít/không dùng email → admin tạo user chỉ với phone + password tạm. Login chấp
   // nhận cả email vừa phone (normalize 84xxx). Email vẫn giữ cho admin/owner + user cũ.
   phone                        String?   @unique
+  // Phase user-create-with-zalo 2026-05-27 — avatar lấy từ Zalo nick của sale lúc tạo
+  // (findUser response trả `avatar` URL). Hiển thị trong UsersRbacView name column.
+  avatarUrl                    String?   @map("avatar_url")
+  // Phase status 4-state 2026-05-27 — set lúc login thành công, derive "Im lặng" (>3d) vs "Hoạt động".
+  // null = chưa từng login (phối hợp với passwordChangedAt=null để hiện "Chưa kích hoạt").
+  lastLoginAt                  DateTime? @map("last_login_at")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -2230,7 +2236,15 @@ model LeadPoolConfig {
   forgottenThresholdDays  Int     @default(30) @map("forgotten_threshold_days")
   // JSON array of status keys to EXCLUDE from pool (sale đang chăm tốt)
   excludedStatuses        Json    @default("[\"hot\",\"potential\",\"won\"]") @map("excluded_statuses")
+  // Deprecated 2026-05-27 — kept để backward-compat read. Code mới dùng autoReturnAfterMinutes.
   autoReturnAfterDays     Int     @default(7) @map("auto_return_after_days")
+  // Phase Lead Pool v2 2026-05-27 — anh chốt granular phút, range 30 phút → 7 ngày (10080 phút).
+  // Default 1440 phút = 1 ngày. Lead bị hold lâu quá thì sale khác chờ → giảm xuống cho rotate nhanh.
+  autoReturnAfterMinutes  Int     @default(1440) @map("auto_return_after_minutes")
+  // Phase v2 — lead chỉ có UID (no phone) không nên vào pool vì sale mới không liên lạc được
+  // (UID per-viewer của sale cũ, không dùng được với nick mới). Default true = bắt buộc phone.
+  // Admin tắt nếu muốn force redistribute UID-only lead (sale tự gọi findUser qua nick mình).
+  requirePhoneInPool      Boolean @default(true) @map("require_phone_in_pool")
   forceNoteBeforeNext     Boolean @default(true) @map("force_note_before_next")
   // JSON array: 'forgotten' | 'customer_list' | 'external_sync'
   enabledSources          Json    @default("[\"forgotten\",\"customer_list\"]") @map("enabled_sources")

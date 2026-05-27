@@ -355,7 +355,7 @@ async function saveEmail() {
     emit('changed');
   } catch (e: any) {
     error.value = e?.response?.data?.error || 'Lỗi đổi email';
-    localEmail.value = props.user.email;
+    localEmail.value = props.user.email ?? '';
   } finally {
     busy.value = false;
   }

@@ -89,6 +89,9 @@ import { profileRoutes } from './modules/zalo/profile-routes.js';
 import { credentialRoutes } from './modules/zalo/credential-routes.js';
 import { eventBuffer } from './shared/event-buffer.js';
 import { systemNotifyRoutes } from './modules/system-notifications/system-notify-routes.js';
+import { userCreateWithZaloRoutes } from './modules/system-notifications/user-create-with-zalo-routes.js';
+import { leadPoolRoutes } from './modules/lead-pool/lead-pool-routes.js';
+import { startLeadPoolCron } from './modules/lead-pool/lead-pool-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -203,6 +206,8 @@ async function bootstrap() {
   await app.register(zaloDashboardRoutes);
   await app.register(notificationRoutes);
   await app.register(systemNotifyRoutes);
+  await app.register(userCreateWithZaloRoutes);
+  await app.register(leadPoolRoutes);
   await app.register(searchRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
@@ -297,6 +302,8 @@ async function bootstrap() {
     // Phase Internal Contact 2-method 2026-05-23 — cleanup pending handshake > 7 ngày (3am daily)
     const { startInternalContactCleanupCron } = await import('./modules/system-notifications/internal-contact-service.js');
     startInternalContactCleanupCron();
+    // Phase Lead Pool 2026-05-24 — auto-return expired leads 2am daily
+    startLeadPoolCron();
     await eventBuffer.start(io);
     // Phase 7 — Automation engine (event bus + materializer + task worker + 3 action handlers)
     if (config.nodeEnv !== 'test') {

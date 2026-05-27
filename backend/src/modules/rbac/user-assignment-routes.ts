@@ -43,6 +43,13 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
       select: {
         id: true,
         email: true,
+        // UI refactor 2026-05-27 — phone hiển thị trong cột chính, email ẩn theo toggle
+        phone: true,
+        // Avatar Zalo lưu lúc create (findUser response). Hiển thị name column.
+        avatarUrl: true,
+        // Phase status 4-state 2026-05-27 — FE compute 4 trạng thái từ 3 trường này + isActive
+        passwordChangedAt: true,
+        lastLoginAt: true,
         fullName: true,
         role: true, // legacy
         permissionGroupId: true,
@@ -55,10 +62,14 @@ export async function registerUserAssignmentRoutes(app: FastifyInstance): Promis
           },
         },
         // Phase Privacy v2 2026-05-23 — cột "🏠 Liên lạc nội bộ" trong UsersRbacView
+        // UI refactor 2026-05-27: add internalContactMethod + internalContactPhone để render
+        // "Zalo ngoài" tag khi sale dùng SĐT cá nhân (không phải nick CRM).
         maxPrivacyNicks: true,
+        internalContactMethod: true,
+        internalContactPhone: true,
         internalContactZaloAccountId: true,
         internalContactNick: {
-          select: { id: true, displayName: true, avatarUrl: true, zaloUid: true, status: true },
+          select: { id: true, displayName: true, avatarUrl: true, phone: true, zaloUid: true, status: true },
         },
         isActive: true,
       },

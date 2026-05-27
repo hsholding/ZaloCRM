@@ -6,8 +6,11 @@
         <p class="hero-sub">Quản lý người dùng tổ chức · Phân phòng ban · Gán nhóm quyền · Vô hiệu hóa khi nghỉ việc</p>
       </div>
       <div class="hero-right" v-if="canCreateUser">
-        <button class="btn-primary" @click="openCreateDialog">
-          <span class="btn-icon">＋</span> Thêm nhân viên
+        <button class="btn-primary" @click="openCreateWithZaloDialog" title="Tạo nhân viên gộp Zalo handshake — tự gửi tin login qua Zalo">
+          <span class="btn-icon">＋</span> Thêm nhân viên (qua Zalo)
+        </button>
+        <button class="btn-secondary" @click="openCreateDialog" title="Tạo nhân viên thủ công — không tự gửi Zalo">
+          Tạo nhanh
         </button>
       </div>
     </header>
@@ -18,16 +21,16 @@
         <div class="stat-value">{{ stats.total }}</div>
       </div>
       <div class="stat-card stat-forest">
-        <div class="stat-label">Đang hoạt động</div>
-        <div class="stat-value">{{ stats.active }}<span class="stat-unit"> / {{ stats.total }}</span></div>
+        <div class="stat-label">🟢 Hoạt động</div>
+        <div class="stat-value">{{ stats.statusActive }}<span class="stat-unit"> / {{ stats.total }}</span></div>
       </div>
       <div class="stat-card stat-mustard">
-        <div class="stat-label">Đã gán phòng ban</div>
-        <div class="stat-value">{{ stats.withDept }}<span class="stat-unit"> / {{ stats.total }}</span></div>
+        <div class="stat-label">🟡 Chưa kích hoạt</div>
+        <div class="stat-value">{{ stats.statusPending }}<span class="stat-unit"> / {{ stats.total }}</span></div>
       </div>
       <div class="stat-card stat-cream">
-        <div class="stat-label">Đã gán nhóm quyền</div>
-        <div class="stat-value">{{ stats.withGroup }}<span class="stat-unit"> / {{ stats.total }}</span></div>
+        <div class="stat-label">💤 Im lặng</div>
+        <div class="stat-value">{{ stats.statusSilent }}<span class="stat-unit"> / {{ stats.total }}</span></div>
       </div>
     </section>
 
@@ -35,7 +38,7 @@
     <div class="at-toolbar" v-if="!loading && store.users.length > 0">
       <div class="search-box at-search">
         <span class="search-icon">🔍</span>
-        <input v-model="searchQ" placeholder="Tìm tên / email..." @input="applyFilter" />
+        <input v-model="searchQ" placeholder="Tìm tên / SĐT / email..." @input="applyFilter" />
         <button v-if="searchQ" class="search-clear" @click="searchQ = ''; applyFilter()">×</button>
       </div>
       <select class="filter-select" v-model="filterDept" @change="applyFilter">
@@ -50,12 +53,17 @@
           {{ '— '.repeat(g._depth) }}{{ g.name }}
         </option>
       </select>
-      <select class="filter-select" v-model="filterActive" @change="applyFilter">
+      <select class="filter-select" v-model="filterStatus" @change="applyFilter">
         <option value="all">Mọi trạng thái</option>
-        <option value="active">🟢 Đang hoạt động</option>
-        <option value="inactive">⚪ Đã vô hiệu</option>
+        <option value="pending">🟡 Chưa kích hoạt</option>
+        <option value="active">🟢 Hoạt động</option>
+        <option value="silent">💤 Im lặng</option>
+        <option value="disabled">⚪ Vô hiệu</option>
       </select>
       <div class="at-toolbar-spacer"></div>
+      <button class="filter-select toggle-email-btn" @click="showEmailColumn = !showEmailColumn" :title="showEmailColumn ? 'Ẩn cột email' : 'Hiện cột email'">
+        {{ showEmailColumn ? '✉️ Ẩn email' : '✉️ Hiện email' }}
+      </button>
       <span class="at-count">{{ filteredUsers.length }} / {{ stats.total }} nhân viên</span>
     </div>
 
@@ -85,7 +93,8 @@
           <tr>
             <th class="th-num">#</th>
             <th class="th-name">Nhân viên</th>
-            <th class="th-email">Email</th>
+            <th class="th-phone">📱 SĐT</th>
+            <th v-if="showEmailColumn" class="th-email">Email</th>
             <th class="th-dept">Phòng ban</th>
             <th class="th-role">Chức vụ</th>
             <th class="th-group">Nhóm quyền</th>
@@ -104,15 +113,27 @@
           >
             <td class="cell-num">{{ i + 1 }}</td>
             <td class="cell-name">
-              <span class="at-avatar" :style="{ background: avatarColor(u.fullName || u.email) }">
-                {{ initials(u.fullName || u.email) }}
+              <img
+                v-if="u.avatarUrl"
+                :src="u.avatarUrl"
+                :alt="u.fullName"
+                class="at-avatar at-avatar-img"
+                referrerpolicy="no-referrer"
+                @error="onAvatarError"
+              />
+              <span v-else class="at-avatar" :style="{ background: avatarColor(u.fullName || u.email || u.phone || '?') }">
+                {{ initials(u.fullName || u.email || u.phone || '?') }}
               </span>
               <div class="cell-name-text">
                 <div class="cell-name-main">{{ u.fullName || '(chưa đặt tên)' }}</div>
                 <div v-if="u.role === 'owner'" class="cell-name-sub owner-tag">👑 Chủ tổ chức</div>
               </div>
             </td>
-            <td class="cell-email">{{ u.email }}</td>
+            <td class="cell-phone">
+              <code v-if="u.phone">{{ formatPhoneDisplay(u.phone) }}</code>
+              <span v-else class="at-empty">—</span>
+            </td>
+            <td v-if="showEmailColumn" class="cell-email">{{ u.email || '—' }}</td>
             <td class="cell-dept">
               <span v-if="u.departmentMember" class="at-chip chip-dept">
                 🏢 {{ u.departmentMember.department.name }}
@@ -140,17 +161,29 @@
               <span v-else class="at-empty">—</span>
             </td>
             <td class="cell-internal">
-              <!-- Phase Privacy v2 2026-05-23 — Nick liên lạc nội bộ -->
+              <!-- UI refactor 2026-05-27: 3 trường hợp
+                   1. Nick CRM → hiện SĐT của nick CRM
+                   2. Personal phone (Zalo ngoài CRM) → hiện SĐT + tag "Zalo ngoài"
+                   3. Chưa setup → "—" -->
               <RouterLink
-                v-if="(u as any).internalContactNick"
-                :to="'/settings/channels/zalo?tab=privacy'"
+                v-if="u.internalContactNick"
+                :to="'/settings/channels/zalo?tab=internal-contact'"
                 class="at-chip chip-internal"
                 @click.stop
-                :title="`Nick: ${(u as any).internalContactNick.displayName || '(chưa đặt tên)'}`"
+                :title="`Nick CRM: ${u.internalContactNick.displayName || '(chưa đặt tên)'}`"
               >
-                🏠 {{ (u as any).internalContactNick.displayName || '(chưa đặt tên)' }}
+                <code>{{ formatPhoneDisplay(u.internalContactNick.phone) || '(thiếu SĐT)' }}</code>
               </RouterLink>
-              <span v-else class="at-empty" :title="`Max ${(u as any).maxPrivacyNicks ?? 2} nick riêng tư`">—</span>
+              <span
+                v-else-if="u.internalContactMethod === 'personal_phone' && u.internalContactPhone"
+                class="at-chip chip-internal-external"
+                :title="`Zalo cá nhân của sale, không có nick trong CRM`"
+                @click.stop
+              >
+                <code>{{ formatPhoneDisplay(u.internalContactPhone) }}</code>
+                <span class="tag-zalo-ngoai">Zalo ngoài</span>
+              </span>
+              <span v-else class="at-empty" :title="`Max ${u.maxPrivacyNicks ?? 2} nick riêng tư`">—</span>
             </td>
             <td class="cell-onboarding">
               <!-- Phase Onboarding v1 2026-05-24 — admin theo dõi % setup của sale -->
@@ -165,8 +198,9 @@
               <span v-else class="at-empty">—</span>
             </td>
             <td class="cell-status">
-              <span v-if="u.isActive" class="at-chip chip-active">🟢 Hoạt động</span>
-              <span v-else class="at-chip chip-inactive">⚪ Vô hiệu</span>
+              <span :class="['at-chip', statusInfo(u).chipClass]" :title="statusInfo(u).tooltip">
+                {{ statusInfo(u).icon }} {{ statusInfo(u).label }}
+              </span>
             </td>
             <td class="cell-actions">
               <button class="at-btn-icon" title="Mở chi tiết" @click.stop="openPanel(u)">✎</button>
@@ -184,6 +218,14 @@
       :current-user-role="currentUserRole"
       @close="closePanel"
       @changed="onChanged"
+    />
+
+    <!-- Phase user-create-with-zalo 2026-05-27 — create user gộp Zalo handshake -->
+    <CreateUserWithZaloModal
+      v-model:open="createWithZaloOpen"
+      :departments="flatDepts"
+      :permission-groups="flatGroups"
+      @created="onCreatedWithZalo"
     />
 
     <!-- Phase Onboarding v1 2026-05-24 — Create user dialog -->
@@ -263,7 +305,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import {
   useRbacStore,
@@ -275,14 +317,20 @@ import {
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/api/index';
 import UserEditPanel from '@/components/rbac/UserEditPanel.vue';
+import CreateUserWithZaloModal from '@/components/users/CreateUserWithZaloModal.vue';
 
 const store = useRbacStore();
 const authStore = useAuthStore();
 
 const searchQ = ref('');
+// UI refactor 2026-05-27 — toggle hiện/ẩn cột email. Persist localStorage để admin
+// chọn 1 lần là nhớ luôn (default = false = ẩn vì sale VN ít dùng email).
+const showEmailColumn = ref<boolean>(localStorage.getItem('rbac.showEmailColumn') === '1');
+watch(showEmailColumn, (v) => localStorage.setItem('rbac.showEmailColumn', v ? '1' : '0'));
 const filterDept = ref('');
 const filterGroup = ref('');
-const filterActive = ref<'all' | 'active' | 'inactive'>('all');
+// Phase status 4-state 2026-05-27 — filter theo 4 status mới (pending/active/silent/disabled)
+const filterStatus = ref<'all' | 'pending' | 'active' | 'silent' | 'disabled'>('all');
 
 const panelOpen = ref(false);
 const selectedUser = ref<RbacUser | null>(null);
@@ -293,6 +341,12 @@ const currentUserRole = computed(() => authStore.user?.role ?? 'member');
 // Phase Onboarding v1 2026-05-24 — Create user dialog state
 const canCreateUser = computed(() => ['owner', 'admin'].includes(currentUserRole.value));
 const createOpen = ref(false);
+// Phase user-create-with-zalo 2026-05-27 — modal mới gộp Zalo handshake
+const createWithZaloOpen = ref(false);
+function openCreateWithZaloDialog() { createWithZaloOpen.value = true; }
+async function onCreatedWithZalo() {
+  await store.loadUsers();
+}
 const creating = ref(false);
 const createError = ref('');
 const showPw = ref(false);
@@ -424,21 +478,22 @@ const flatGroups = computed(() => {
 
 const filteredUsers = computed(() => {
   return store.users.filter((u) => {
-    if (filterActive.value === 'active' && !u.isActive) return false;
-    if (filterActive.value === 'inactive' && u.isActive) return false;
+    if (filterStatus.value !== 'all' && computeStatusKey(u) !== filterStatus.value) return false;
     return true;
   });
 });
 
 const stats = computed(() => {
-  let total = store.users.length;
-  let active = 0, withDept = 0, withGroup = 0;
+  const total = store.users.length;
+  let statusActive = 0, statusPending = 0, statusSilent = 0, statusDisabled = 0;
   for (const u of store.users) {
-    if (u.isActive) active++;
-    if (u.departmentMember) withDept++;
-    if (u.permissionGroupId) withGroup++;
+    const k = computeStatusKey(u);
+    if (k === 'active') statusActive++;
+    else if (k === 'pending') statusPending++;
+    else if (k === 'silent') statusSilent++;
+    else statusDisabled++;
   }
-  return { total, active, withDept, withGroup };
+  return { total, statusActive, statusPending, statusSilent, statusDisabled };
 });
 
 const loading = computed(() => store.loading);
@@ -485,6 +540,69 @@ function avatarColor(name: string): string {
   const colors = ['#aa2d00', '#0a2e0e', '#d9a441', '#1b61c9', '#7a2000', '#1a3866'];
   const h = (name || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return colors[h % colors.length];
+}
+
+// Phase status 4-state 2026-05-27 — compute 4 trạng thái từ user fields:
+//   - isActive=false → 'disabled' (Vô hiệu)
+//   - isActive=true && passwordChangedAt=null → 'pending' (Chưa kích hoạt)
+//   - isActive=true && passwordChangedAt!=null && lastLoginAt > now-3d → 'active' (Hoạt động)
+//   - else → 'silent' (Im lặng — đã login nhưng > 3 ngày không vào, hoặc chưa login bao giờ dù đã đổi pw)
+const SILENT_THRESHOLD_MS = 3 * 24 * 3600 * 1000;
+type StatusKey = 'pending' | 'active' | 'silent' | 'disabled';
+
+function computeStatusKey(u: RbacUser): StatusKey {
+  if (!u.isActive) return 'disabled';
+  if (!u.passwordChangedAt) return 'pending';
+  if (!u.lastLoginAt) return 'silent';
+  const lastLogin = new Date(u.lastLoginAt).getTime();
+  return Date.now() - lastLogin <= SILENT_THRESHOLD_MS ? 'active' : 'silent';
+}
+
+function statusInfo(u: RbacUser): { icon: string; label: string; chipClass: string; tooltip: string } {
+  const key = computeStatusKey(u);
+  switch (key) {
+    case 'pending':
+      return {
+        icon: '🟡',
+        label: 'Chưa kích hoạt',
+        chipClass: 'chip-status-pending',
+        tooltip: 'Sale chưa từng đăng nhập + đổi mật khẩu lần đầu',
+      };
+    case 'active':
+      return {
+        icon: '🟢',
+        label: 'Hoạt động',
+        chipClass: 'chip-status-active',
+        tooltip: `Login lần cuối: ${u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('vi-VN') : '—'}`,
+      };
+    case 'silent':
+      return {
+        icon: '💤',
+        label: 'Im lặng',
+        chipClass: 'chip-status-silent',
+        tooltip: u.lastLoginAt
+          ? `Hơn 3 ngày chưa login. Login cuối: ${new Date(u.lastLoginAt).toLocaleString('vi-VN')}`
+          : 'Đã đổi mật khẩu lần đầu nhưng chưa từng login lại',
+      };
+    case 'disabled':
+      return { icon: '⚪', label: 'Vô hiệu', chipClass: 'chip-status-disabled', tooltip: 'Tài khoản đã bị vô hiệu — không cho đăng nhập' };
+  }
+}
+
+// UI refactor 2026-05-27 — format SĐT 84xxx → 0xxx xxx xxx cho dễ đọc.
+function formatPhoneDisplay(phone: string | null | undefined): string {
+  if (!phone) return '';
+  let s = phone.replace(/\D/g, '');
+  if (s.startsWith('84') && s.length === 11) s = '0' + s.slice(2);
+  if (s.length === 10) return s.slice(0, 4) + ' ' + s.slice(4, 7) + ' ' + s.slice(7);
+  return phone;
+}
+
+// Khi Zalo CDN từ chối ảnh avatar (referer, expire, etc.) → fallback initials
+function onAvatarError(event: Event) {
+  const img = event.target as HTMLImageElement;
+  // Ẩn ảnh + reveal initials sibling. Cách đơn giản nhất: gán display:none cho img.
+  img.style.display = 'none';
 }
 
 // Phase Onboarding v1 2026-05-24 — chip màu theo % setup
@@ -621,6 +739,11 @@ function onboardingTooltip(s: OnboardingSummary): string {
   justify-content: center;
   flex-shrink: 0;
 }
+.at-avatar-img {
+  object-fit: cover;
+  background: #e8e8e8;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
 .cell-name-text { min-width: 0; }
 .cell-name-main {
   font-size: 13px;
@@ -650,6 +773,54 @@ function onboardingTooltip(s: OnboardingSummary): string {
   text-overflow: ellipsis;
   max-width: 260px;
 }
+.th-phone { min-width: 130px; }
+.cell-phone {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  color: #181d26;
+  white-space: nowrap;
+}
+.cell-phone code {
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.chip-internal-external {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #fef3e2;
+  border: 1px solid #fbc02d55;
+  font-size: 12px;
+}
+.chip-internal-external code {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  background: transparent;
+  color: #8a6300;
+}
+.tag-zalo-ngoai {
+  font-size: 10px;
+  font-weight: 600;
+  background: #fbc02d;
+  color: #4a3500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.toggle-email-btn {
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: white;
+  border-radius: 7px;
+}
+.toggle-email-btn:hover { background: #f5f5f5; }
 
 /* Airtable chips */
 .at-chip {
@@ -677,6 +848,12 @@ function onboardingTooltip(s: OnboardingSummary): string {
 .chip-internal:hover { background: #FDE68A; }
 .chip-active { background: #d8ecda; color: #0a2e0e; }
 .chip-inactive { background: #f0f1f3; color: #9297a0; }
+
+/* Phase status 4-state 2026-05-27 — 4 màu chip cho 4 trạng thái */
+.chip-status-active   { background: #d8ecda; color: #0a2e0e; font-weight: 500; }
+.chip-status-pending  { background: #fff4d6; color: #7a5818; font-weight: 500; }
+.chip-status-silent   { background: #e8eaef; color: #5a6470; font-weight: 500; }
+.chip-status-disabled { background: #f0f1f3; color: #9297a0; font-weight: 500; }
 /* Phase Onboarding v1 2026-05-24 — chip % setup */
 .chip-onboarding-done     { background: #ECFDF5; color: #047857; }
 .chip-onboarding-progress { background: #FEF3C7; color: #92400E; }

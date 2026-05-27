@@ -54,7 +54,11 @@ export interface OnboardingSummary {
 
 export interface RbacUser {
   id: string;
-  email: string;
+  email: string | null;
+  // UI refactor 2026-05-27 — phone hiển thị cột chính, email ẩn theo toggle
+  phone: string | null;
+  // Avatar Zalo lưu lúc create-with-zalo (findUser response)
+  avatarUrl: string | null;
   fullName: string;
   role: string;
   permissionGroupId: string | null;
@@ -64,6 +68,21 @@ export interface RbacUser {
     deptRole: 'leader' | 'deputy' | 'member';
     department: { id: string; name: string; path: string };
   } | null;
+  // UI refactor 2026-05-27 — "Liên lạc nội bộ" column hiển thị:
+  //   internalContactNick (nick CRM)  → "Số điện thoại của nick CRM"
+  //   internalContactPhone (Zalo cá nhân ngoài CRM) → "SĐT + tag 'Zalo ngoài'"
+  internalContactMethod: 'crm_nick' | 'personal_phone' | null;
+  internalContactPhone: string | null;
+  internalContactZaloAccountId: string | null;
+  internalContactNick: { id: string; displayName: string | null; avatarUrl: string | null; phone: string | null; zaloUid: string | null; status: string } | null;
+  maxPrivacyNicks?: number;
+  // Phase status 4-state 2026-05-27 — FE compute status từ 3 field này:
+  //   - isActive=false → Vô hiệu
+  //   - isActive=true && passwordChangedAt=null → Chưa kích hoạt (sale chưa từng login + đổi pw)
+  //   - isActive=true && passwordChangedAt!=null && lastLoginAt > now-3d → Hoạt động
+  //   - else → Im lặng
+  passwordChangedAt: string | null;
+  lastLoginAt: string | null;
   isActive: boolean;
   onboarding?: OnboardingSummary | null;
 }
