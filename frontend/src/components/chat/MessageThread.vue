@@ -261,7 +261,12 @@
 
           <!-- Album — Phase A UI fix (2026-05-21): thêm Avatar top-left khớp với
                message-bubble để align lề trái nhất quán. Sender name vào TRONG bubble. -->
-          <div v-else-if="item.kind === 'album'" class="msg-album-wrap" :class="item.senderType === 'self' ? 'self' : ''">
+          <div
+            v-else-if="item.kind === 'album'"
+            class="msg-album-wrap"
+            :class="item.senderType === 'self' ? 'self' : ''"
+            :data-album-msg-ids="item.messages.map(m => m.id).join(',')"
+          >
             <Avatar
               v-if="item.senderType !== 'self'"
               :src="resolveSenderAvatar(item.messages[0])"
@@ -282,6 +287,8 @@
                     :src="getImageUrl(m)!"
                     alt="Hình ảnh"
                     class="album-tile"
+                    :data-msg-id="m.id"
+                    :data-zalo-msg-id="m.zaloMsgId || ''"
                     @click="openImageLightbox(getImageUrl(m)!, item.messages.map(x => getImageUrl(x)!).filter(Boolean))"
                   />
                 </div>
@@ -310,7 +317,6 @@
               'msg-privacy-blurred': privacyVisibility.shouldBlurMessage(item.msg, conversation),
               'msg-wrap-self': item.msg.senderType === 'self',
               'msg-wrap-other': item.msg.senderType !== 'self',
-              'msg-jump-highlight': jumpHighlightId === item.msg.id,
             }"
             :data-msg-id="item.msg.id"
             :data-zalo-msg-id="item.msg.zaloMsgId || ''"
@@ -833,7 +839,8 @@ const lastSelfMessageId = computed<string | null>(() => {
 });
 
 // ── Jump-to-quoted-message — click vào reply card → scroll tới tin gốc + highlight ─
-const jumpHighlightId = ref<string | null>(null);
+// DOM direct manipulation để work cho cả single bubble lẫn album tile (mỗi tile
+// trong album KHÔNG render qua MessageBubble component, chỉ là <img> trong wrap).
 let jumpHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
 function jumpToReply(replyMsgId: string) {
@@ -843,15 +850,21 @@ function jumpToReply(replyMsgId: string) {
     toast.push('Tin gốc không có trong khung chat (có thể nằm ngoài 50 tin gần nhất)');
     return;
   }
-  // Tìm DOM element theo data-msg-id
+  // Query DOM — `data-msg-id` có trên `.msg-bubble-wrap` (single) + `.album-tile` (album).
   const el = document.querySelector(`[data-msg-id="${target.id}"]`) as HTMLElement | null;
-  if (!el) return;
+  if (!el) {
+    toast.push('Tin gốc không có trong khung chat hiện tại');
+    return;
+  }
   el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  // Highlight trong 2s
-  jumpHighlightId.value = target.id;
+
+  // Highlight wrap chứa element — `.msg-bubble-wrap` cho single, `.msg-album-wrap` cho album.
+  const wrap = el.closest('.msg-bubble-wrap, .msg-album-wrap') as HTMLElement | null;
+  if (!wrap) return;
+  wrap.classList.add('msg-jump-highlight');
   if (jumpHighlightTimer) clearTimeout(jumpHighlightTimer);
   jumpHighlightTimer = setTimeout(() => {
-    jumpHighlightId.value = null;
+    wrap.classList.remove('msg-jump-highlight');
     jumpHighlightTimer = null;
   }, 2000);
 }
@@ -1938,6 +1951,27 @@ function onInsertSuggestionEvent(e: Event) {
 onMounted(() => window.addEventListener('chat:insert-suggestion', onInsertSuggestionEvent));
 onBeforeUnmount(() => window.removeEventListener('chat:insert-suggestion', onInsertSuggestionEvent));
 
+// 2026-05-27: Phase Lead Pool — modal "Mở chat Zalo" navigate kèm ?draft=...
+// → tự apply vào input editor + clear query để refresh F5 không paste lại.
+import { useRoute as _useRouteDraft, useRouter as _useRouterDraft } from 'vue-router';
+const _draftRoute = _useRouteDraft();
+const _draftRouter = _useRouterDraft();
+async function consumeDraftFromQuery() {
+  const draft = _draftRoute.query.draft;
+  if (typeof draft !== 'string' || !draft.trim()) return;
+  await nextTick();
+  // delay nhẹ để editor mount xong rồi mới setContent
+  setTimeout(() => {
+    void applySuggestion(draft);
+    // Clear query để refresh không apply lại
+    const q = { ..._draftRoute.query };
+    delete q.draft;
+    _draftRouter.replace({ path: _draftRoute.path, query: q }).catch(() => {});
+  }, 250);
+}
+onMounted(() => { void consumeDraftFromQuery(); });
+watch(() => _draftRoute.query.draft, () => { void consumeDraftFromQuery(); });
+
 function onTypingEvent() {
   emit('typing');
   const value = inputText.value;
@@ -2114,8 +2148,10 @@ watch(() => props.editingMessage?.id, async (id) => {
   color: var(--smax-grey-700, #6b7280);
 }
 
-/* Jump-to-quoted-message highlight — pulse border 2s khi user click reply card */
-.msg-bubble-wrap.msg-jump-highlight :deep(.message-bubble) {
+/* Jump-to-quoted-message highlight — pulse border 2s khi user click reply card.
+   Cover cả single bubble (.message-bubble) và album bubble (.bubble.album). */
+.msg-bubble-wrap.msg-jump-highlight :deep(.message-bubble),
+.msg-album-wrap.msg-jump-highlight :deep(.bubble.album) {
   animation: msg-jump-pulse 2s ease-out;
 }
 @keyframes msg-jump-pulse {
