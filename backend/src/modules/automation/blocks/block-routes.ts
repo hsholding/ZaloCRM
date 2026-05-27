@@ -93,6 +93,17 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
         if (!folder) return reply.status(400).send({ error: 'folder not found' });
       }
       if (body.ownerNickId) {
+        // Phase Zalo Account Mutation Gate 2026-05-27: ownerNickId phải nằm
+        // trong scope của user create — chặn sale phòng A bind block trên nick
+        // sale phòng B → block sẽ chạy automation trên nick lạ.
+        const { getZaloScope } = await import('../../zalo/zalo-scope.js');
+        const scope = await getZaloScope(user.id, user.orgId, user.role);
+        if (!scope.isOrgAdmin && !scope.accessibleIds.includes(body.ownerNickId)) {
+          return reply.status(403).send({
+            error: 'Bạn không có quyền dùng nick này làm ownerNick',
+            code: 'owner_nick_not_in_scope',
+          });
+        }
         const nick = await prisma.zaloAccount.findFirst({
           where: { id: body.ownerNickId, orgId: user.orgId },
           select: { id: true },
@@ -148,6 +159,17 @@ export async function blockRoutes(app: FastifyInstance): Promise<void> {
         if (!v.ok) return reply.status(400).send({ error: 'content invalid', detail: v.error });
       }
 
+      // Phase Zalo Account Mutation Gate 2026-05-27: validate ownerNickId in scope khi update
+      if (body.ownerNickId) {
+        const { getZaloScope } = await import('../../zalo/zalo-scope.js');
+        const scope = await getZaloScope(user.id, user.orgId, user.role);
+        if (!scope.isOrgAdmin && !scope.accessibleIds.includes(body.ownerNickId)) {
+          return reply.status(403).send({
+            error: 'Bạn không có quyền dùng nick này làm ownerNick',
+            code: 'owner_nick_not_in_scope',
+          });
+        }
+      }
       const block = await prisma.block.update({
         where: { id },
         data: {

@@ -11,6 +11,7 @@
  * Caller dùng `where: { id: { in: ids }, orgId: ... }` để filter list.
  */
 import { prisma } from '../../shared/database/prisma-client.js';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 
 export interface ZaloScope {
   /** Account IDs user được phép xem (read scope) */
@@ -106,4 +107,84 @@ export function canManageAccount(
 ): boolean {
   if (legacyRole === 'owner' || legacyRole === 'admin') return true;
   return accountOwnerUserId === userId;
+}
+
+/**
+ * Phase Zalo Account Mutation Gate 2026-05-27 — gate cho mọi mutation
+ * (POST/PUT/PATCH/DELETE) trên `:id` của ZaloAccount.
+ *
+ * Quy tắc: chỉ OWNER của nick hoặc ORG admin/owner mới được mutate.
+ * Trưởng phòng KHÔNG được delete/login/proxy nick cấp dưới (đọc OK qua
+ * requireAccountVisible).
+ *
+ * Sử dụng trong Fastify route preHandler hoặc đầu handler:
+ *   const account = await requireAccountManagement(request, reply, accountId);
+ *   if (!account) return;  // reply đã send 401/403/404
+ *
+ * Trả về account row { id, ownerUserId, orgId, status, ... } nếu pass,
+ * hoặc null nếu đã reply error (caller phải return ngay).
+ */
+export async function requireAccountManagement(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  accountId: string,
+): Promise<{ id: string; ownerUserId: string | null; orgId: string; status: string } | null> {
+  const user = (request as any).user;
+  if (!user) {
+    reply.status(401).send({ error: 'Unauthorized' });
+    return null;
+  }
+  const account = await prisma.zaloAccount.findFirst({
+    where: { id: accountId, orgId: user.orgId },
+    select: { id: true, ownerUserId: true, orgId: true, status: true },
+  });
+  if (!account) {
+    reply.status(404).send({ error: 'Account not found' });
+    return null;
+  }
+  if (!canManageAccount(account.ownerUserId, user.id, user.role)) {
+    reply.status(403).send({
+      error: 'Bạn không có quyền thao tác trên nick này',
+      code: 'not_account_owner',
+    });
+    return null;
+  }
+  return account;
+}
+
+/**
+ * Phase Zalo Account Mutation Gate 2026-05-27 — gate cho mọi READ endpoint
+ * trên `:id` (uptime, status, labels-overview, friends-db nick-id, ...).
+ *
+ * Quy tắc: id PHẢI thuộc `getZaloScope().accessibleIds` (owner + ACL grant +
+ * dept-subtree cascade nếu leader/deputy). Khác với requireAccountManagement,
+ * trưởng phòng ĐƯỢC đọc nick cấp dưới.
+ */
+export async function requireAccountVisible(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  accountId: string,
+): Promise<{ id: string; ownerUserId: string | null; orgId: string } | null> {
+  const user = (request as any).user;
+  if (!user) {
+    reply.status(401).send({ error: 'Unauthorized' });
+    return null;
+  }
+  const account = await prisma.zaloAccount.findFirst({
+    where: { id: accountId, orgId: user.orgId },
+    select: { id: true, ownerUserId: true, orgId: true },
+  });
+  if (!account) {
+    reply.status(404).send({ error: 'Account not found' });
+    return null;
+  }
+  const scope = await getZaloScope(user.id, user.orgId, user.role);
+  if (!scope.isOrgAdmin && !scope.accessibleIds.includes(accountId)) {
+    reply.status(403).send({
+      error: 'Bạn không có quyền xem nick này',
+      code: 'not_in_scope',
+    });
+    return null;
+  }
+  return account;
 }

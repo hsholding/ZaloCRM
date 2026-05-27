@@ -11,6 +11,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { prisma } from '../../shared/database/prisma-client.js';
+import { getZaloScope } from '../zalo/zalo-scope.js';
 
 // In-memory cache cho sticker metadata — key = `${catId}:${id}`
 interface StickerMeta {
@@ -157,10 +158,16 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
       return reply.header('Cache-Control', 'public, max-age=86400').send(cached.data);
     }
 
-    // Tìm connected Zalo account bất kì để gọi API (sticker là global Zalo data,
-    // không phải per-account)
+    // Phase Zalo Account Mutation Gate 2026-05-27: scope theo org + accessible nick
+    // (trước fix thiếu orgId → cross-tenant: org A có thể dùng nick org B để fetch sticker).
+    const user = request.user!;
+    const scope = await getZaloScope(user.id, user.orgId, user.role);
     const account = await prisma.zaloAccount.findFirst({
-      where: { status: 'connected' },
+      where: {
+        orgId: user.orgId,
+        status: 'connected',
+        ...(scope.isOrgAdmin ? {} : { id: { in: scope.accessibleIds } }),
+      },
       select: { id: true },
     });
     if (!account) return reply.status(503).send({ error: 'no connected Zalo account' });
@@ -214,8 +221,15 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/zalo-sticker-list', async (request: FastifyRequest, reply: FastifyReply) => {
     const { keyword } = request.query as { keyword?: string };
 
+    // Phase Zalo Account Mutation Gate 2026-05-27: scope org + accessible
+    const user = request.user!;
+    const scope = await getZaloScope(user.id, user.orgId, user.role);
     const account = await prisma.zaloAccount.findFirst({
-      where: { status: 'connected' },
+      where: {
+        orgId: user.orgId,
+        status: 'connected',
+        ...(scope.isOrgAdmin ? {} : { id: { in: scope.accessibleIds } }),
+      },
       select: { id: true },
     });
     if (!account) return reply.status(503).send({ error: 'no connected Zalo account' });
@@ -345,8 +359,15 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
 
     if (misses.length === 0) return { users };
 
+    // Phase Zalo Account Mutation Gate 2026-05-27: scope org + accessible
+    const userForScope = request.user!;
+    const scope = await getZaloScope(userForScope.id, userForScope.orgId, userForScope.role);
     const accounts = await prisma.zaloAccount.findMany({
-      where: { status: 'connected' },
+      where: {
+        orgId: userForScope.orgId,
+        status: 'connected',
+        ...(scope.isOrgAdmin ? {} : { id: { in: scope.accessibleIds } }),
+      },
       select: { id: true },
     });
     if (accounts.length === 0) {
@@ -378,10 +399,15 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     }
 
     // Thử TẤT CẢ connected accounts đến khi có 1 trả profile.
-    // Lý do: nhiều tài khoản trong cùng group nhưng chỉ 1 số là friend của UID
-    // → account không friend trả empty → trước đó chỉ thử account đầu tiên → 404.
+    // Phase Zalo Account Mutation Gate 2026-05-27: scope org + accessible (cross-tenant fix)
+    const userForScope = request.user!;
+    const scopeForLookup = await getZaloScope(userForScope.id, userForScope.orgId, userForScope.role);
     const accounts = await prisma.zaloAccount.findMany({
-      where: { status: 'connected' },
+      where: {
+        orgId: userForScope.orgId,
+        status: 'connected',
+        ...(scopeForLookup.isOrgAdmin ? {} : { id: { in: scopeForLookup.accessibleIds } }),
+      },
       select: { id: true },
     });
     if (accounts.length === 0) return reply.status(503).send({ error: 'no connected Zalo account' });

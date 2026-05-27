@@ -19,6 +19,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from './zalo-pool.js';
 import { logActivity } from '../activity/activity-logger.js';
+import { getZaloScope, requireAccountManagement, requireAccountVisible } from './zalo-scope.js';
 
 type LabelDataFromSdk = {
   id: number | string;
@@ -454,13 +455,13 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/v1/zalo-accounts/labels-overview', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
+      // Phase Zalo Account Mutation Gate 2026-05-27: migrate sang getZaloScope
+      // để trưởng phòng thấy labels của nick cấp dưới (cascade dept tree).
+      const scope = await getZaloScope(user.id, user.orgId, user.role);
       const accounts = await prisma.zaloAccount.findMany({
         where: {
           orgId: user.orgId,
-          OR: [
-            { ownerUserId: user.id },
-            { access: { some: { userId: user.id } } },
-          ],
+          ...(scope.isOrgAdmin ? {} : { id: { in: scope.accessibleIds } }),
         },
         select: {
           id: true, displayName: true, avatarUrl: true, status: true,
@@ -494,12 +495,9 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
   //    Settings page "Đồng bộ ngay" + manual user click.
   app.post('/api/v1/zalo-accounts/:id/labels/sync', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     try {
-      const user = request.user!;
-      const account = await prisma.zaloAccount.findFirst({
-        where: { id: request.params.id, orgId: user.orgId },
-        select: { id: true, orgId: true },
-      });
-      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      // Phase Zalo Account Mutation Gate 2026-05-27: gate write trên nick
+      const account = await requireAccountManagement(request, reply, request.params.id);
+      if (!account) return reply;
       const result = await syncLabelsForAccount(account.id, account.orgId);
       return result;
     } catch (err) {
@@ -513,12 +511,9 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
   //    Frontend trigger khi switch conversation / load tab. No-op nếu vừa sync gần đây.
   app.post('/api/v1/zalo-accounts/:id/labels/touch', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     try {
-      const user = request.user!;
-      const account = await prisma.zaloAccount.findFirst({
-        where: { id: request.params.id, orgId: user.orgId },
-        select: { id: true, orgId: true },
-      });
-      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      // Phase Zalo Account Mutation Gate 2026-05-27: gate (touch là write side-effect)
+      const account = await requireAccountManagement(request, reply, request.params.id);
+      if (!account) return reply;
       const result = await syncLabelsIfStale(account.id, account.orgId);
       if (!result) return { ok: true, skipped: true, reason: 'cooldown' };
       return { ok: true, ...result };
@@ -539,12 +534,9 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
     Body: { threadId: string; labelId: number | null };
   }>, reply: FastifyReply) => {
     try {
-      const user = request.user!;
-      const account = await prisma.zaloAccount.findFirst({
-        where: { id: request.params.id, orgId: user.orgId },
-        select: { id: true, orgId: true },
-      });
-      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      // Phase Zalo Account Mutation Gate 2026-05-27: gate write (label thread)
+      const account = await requireAccountManagement(request, reply, request.params.id);
+      if (!account) return reply;
 
       const threadId = (request.body?.threadId || '').trim();
       const newLabelId = request.body?.labelId ?? null;
@@ -682,12 +674,9 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
     Body: { color?: string; text?: string; emoji?: string };
   }>, reply: FastifyReply) => {
     try {
-      const user = request.user!;
-      const account = await prisma.zaloAccount.findFirst({
-        where: { id: request.params.id, orgId: user.orgId },
-        select: { id: true, orgId: true },
-      });
-      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      // Phase Zalo Account Mutation Gate 2026-05-27: gate edit label nick
+      const account = await requireAccountManagement(request, reply, request.params.id);
+      if (!account) return reply;
 
       const labelId = Number(request.params.labelId);
       const label = await prisma.zaloLabel.findUnique({

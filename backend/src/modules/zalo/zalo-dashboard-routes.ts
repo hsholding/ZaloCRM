@@ -16,7 +16,7 @@ import { requireRole } from '../auth/role-middleware.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { zaloPool } from './zalo-pool.js';
 import { logger } from '../../shared/utils/logger.js';
-import { getZaloScope, canManageAccount } from './zalo-scope.js';
+import { getZaloScope, canManageAccount, requireAccountVisible } from './zalo-scope.js';
 import { uptimeWindowBatch } from './status-log-service.js';
 import { revokeAllSessions } from '../privacy/pin-service.js';
 import { getNickDayMetricsBatch, type NickDayMetrics } from './nick-metrics-service.js';
@@ -375,11 +375,9 @@ export async function zaloDashboardRoutes(app: FastifyInstance): Promise<void> {
       const range = request.query.range ?? '7d';
       const n = range === '24h' ? 1 : range === '30d' ? 30 : 7;
 
-      const account = await prisma.zaloAccount.findFirst({
-        where: { id, orgId: user.orgId },
-        select: { id: true },
-      });
-      if (!account) return reply.status(404).send({ error: 'Account not found' });
+      // Phase Zalo Account Mutation Gate 2026-05-27: read scope (trưởng phòng OK qua dept cascade)
+      const gate = await requireAccountVisible(request, reply, id);
+      if (!gate) return reply;
 
       const { start, days } = lastNDays(n);
       const today = startOfDay(new Date());

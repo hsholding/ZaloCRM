@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
 import { resolveAccount, checkAccess, handleError, getAccessibleZaloAccountIds } from './zalo-route-helpers.js';
+import { getZaloScope } from './zalo-scope.js';
 import { markFriendRequestSent } from './friend-event-handler.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
@@ -114,14 +115,11 @@ export async function friendRoutes(app: FastifyInstance) {
       sortBy = 'recent',
     } = request.query as { kind?: string; page?: string; limit?: string; search?: string; sortBy?: string };
     try {
-      // B3 fix — Resolve accessible accounts via shared helper (cùng hierarchy với
-      // checkAccess): owner/admin → tất cả nick org; non-admin → ACL + owned.
-      // Trước đây inline chỉ explicit + owned → admin không own đủ nick bị empty list.
-      const accessibleIds = await getAccessibleZaloAccountIds({
-        id: user.id,
-        orgId: user.orgId,
-        role: user.role,
-      });
+      // Phase Zalo Account Mutation Gate 2026-05-27: migrate sang getZaloScope
+      // (helper cũ getAccessibleZaloAccountIds chỉ ACL+owned, KHÔNG cascade dept.
+      // Trưởng phòng giờ thấy friend nick cấp dưới).
+      const scope = await getZaloScope(user.id, user.orgId, user.role);
+      const accessibleIds = scope.accessibleIds;
 
       if (accessibleIds.length === 0) {
         return { friends: [], total: 0, counts: {}, page: 1, limit: parseInt(limit, 10) || 25 };
