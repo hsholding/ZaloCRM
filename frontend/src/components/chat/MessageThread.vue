@@ -1,5 +1,12 @@
 <template>
-  <div class="message-thread">
+  <div
+    class="message-thread"
+    :class="{ 'drag-over': isDraggingFiles }"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDropFiles"
+  >
     <!-- Empty state -->
     <div v-if="!conversation" class="empty-state">
       <v-icon icon="mdi-chat-outline" size="96" color="grey-lighten-2" />
@@ -7,6 +14,15 @@
     </div>
 
     <template v-else>
+      <div v-if="isDraggingFiles" class="drop-overlay">
+        <div class="drop-card">
+          <v-icon size="34" color="primary">mdi-cloud-upload-outline</v-icon>
+          <div class="drop-title">Thả để gửi file</div>
+          <div class="drop-subtitle">Hình ảnh, video và tài liệu sẽ được upload vào cuộc trò chuyện này</div>
+        </div>
+      </div>
+
+
       <!-- ════════ Chat header (Smax-style — 2 rows) ════════ -->
       <header class="chat-header">
         <Avatar
@@ -1633,6 +1649,8 @@ async function onSendSticker(sticker: { id: number; catId: number; type: number 
 // ── File / image upload ─────────────────────────────────────────────────────
 const imageInputRef = ref<HTMLInputElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const dragDepth = ref(0);
+const isDraggingFiles = ref(false);
 
 function onPickImage() { imageInputRef.value?.click(); }
 function onPickFile() { fileInputRef.value?.click(); }
@@ -1652,6 +1670,59 @@ function onPasteImage(files: File[]) {
   handleImageFiles(files);
 }
 
+function hasDraggedFiles(event: DragEvent): boolean {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function resetDragState() {
+  dragDepth.value = 0;
+  isDraggingFiles.value = false;
+}
+
+function onDragEnter(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  dragDepth.value += 1;
+  isDraggingFiles.value = true;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+}
+
+function onDragOver(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  isDraggingFiles.value = true;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+}
+
+function onDragLeave(event: DragEvent) {
+  if (!isDraggingFiles.value) return;
+  if (
+    event.currentTarget instanceof Node &&
+    event.relatedTarget instanceof Node &&
+    event.currentTarget.contains(event.relatedTarget)
+  ) {
+    return;
+  }
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+  if (dragDepth.value === 0) isDraggingFiles.value = false;
+}
+
+async function onDropFiles(event: DragEvent) {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  const files = Array.from(event.dataTransfer?.files || []);
+  resetDragState();
+  if (!files.length) return;
+  if (!props.conversation?.id) {
+    toast.error('Chọn cuộc trò chuyện trước khi gửi file');
+    return;
+  }
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+  const otherFiles = files.filter((file) => !file.type.startsWith('image/'));
+  if (imageFiles.length) await handleImageFiles(imageFiles);
+  if (otherFiles.length) await handleFiles(otherFiles);
+}
+
 async function handleImageFiles(files: File[]) {
   if (!props.conversation?.id) return;
   if (!files.length) return;
@@ -1659,7 +1730,7 @@ async function handleImageFiles(files: File[]) {
   try {
     const fd = new FormData();
     for (const f of files) fd.append('files', f, f.name);
-    await api.post(`/conversations/${props.conversation.id}/upload-image`, fd, {
+    await api.post(`/conversations/${props.conversation.id}/attachments`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     toast.success(`Đã gửi ${files.length} ảnh`);
@@ -1671,15 +1742,13 @@ async function handleImageFiles(files: File[]) {
   }
 }
 async function handleFiles(files: File[]) {
-  // TODO: backend chưa có endpoint /upload-file riêng cho non-image
-  // Tạm dùng same endpoint upload-image — Zalo SDK auto detect type qua extension
   if (!props.conversation?.id) return;
   if (!files.length) return;
   toast.push(`📎 Đang gửi ${files.length} file…`);
   try {
     const fd = new FormData();
     for (const f of files) fd.append('files', f, f.name);
-    await api.post(`/conversations/${props.conversation.id}/upload-image`, fd, {
+    await api.post(`/conversations/${props.conversation.id}/attachments`, fd, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     toast.success(`Đã gửi ${files.length} file`);
@@ -1982,6 +2051,38 @@ watch(() => props.editingMessage?.id, async (id) => {
   height: 100%;
   background: var(--smax-grey-100);
   overflow: hidden;
+  position: relative;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.72);
+  border: 2px dashed var(--smax-primary, #2962ff);
+  pointer-events: none;
+}
+.drop-card {
+  width: min(360px, calc(100% - 40px));
+  padding: 18px 20px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18);
+  text-align: center;
+}
+.drop-title {
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--smax-text, #111827);
+}
+.drop-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--smax-grey-700, #6b7280);
 }
 
 /* ════════ Privacy blur — message bubble (cột 3) ════════ */

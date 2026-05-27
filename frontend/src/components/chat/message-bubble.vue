@@ -555,7 +555,9 @@ const videoThumb = computed(() => {
   const p = safeParse(props.message.content);
   if (!p) return null;
   const thumb = (p.thumbUrl as string) || (p.thumb as string) || (p.thumbnail as string);
-  return typeof thumb === 'string' && thumb.startsWith('http') ? thumb : null;
+  if (typeof thumb !== 'string' || !thumb.startsWith('http')) return null;
+  if (/\.(mp4|mov|webm|mkv)(\?|#|$)/i.test(thumb)) return null;
+  return thumb;
 });
 const videoTitle = computed(() => {
   const p = safeParse(props.message.content);

@@ -104,10 +104,18 @@ function isSessionExpiredError(err: any): boolean {
 }
 
 function isMalformedJsonResponseError(err: any): boolean {
+  // SyntaxError từ V8 JSON.parse có nhiều variant:
+  //   "Unexpected token X in JSON at position Y"
+  //   "Unexpected end of JSON input"
+  //   "No number after minus sign in JSON at position Y"
+  //   "X is not valid JSON" (Node 20+)
+  // → catch theo class hoặc substring "JSON" + position phrase.
+  if (err?.name === 'SyntaxError') return true;
   const msg = String(err?.message || err || '');
   return (
     msg.includes('Unexpected token') ||
     msg.includes('Unexpected end of JSON input') ||
+    msg.includes('in JSON at position') ||
     msg.includes('is not valid JSON')
   );
 }
