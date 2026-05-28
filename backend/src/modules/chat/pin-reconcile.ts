@@ -37,7 +37,6 @@ export async function reconcilePinsOnReconnect(
     }
 
     // 3. Map zalo threadIds → CRM Conversation ids (qua externalThreadId)
-    const zaloSet = new Set(zaloThreadIds);
     const matchedConvs = zaloThreadIds.length === 0
       ? []
       : await prisma.conversation.findMany({
@@ -49,39 +48,16 @@ export async function reconcilePinsOnReconnect(
         });
     const zaloMatchedConvIds = new Set(matchedConvs.map((c) => c.id));
 
-    // 4. Lấy CRM pinned hiện tại — JOIN conversation để biết externalThreadId
+    // 4. Lấy CRM pinned hiện tại
     const crmPinned = await prisma.pinnedConversation.findMany({
       where: { zaloAccountId: accountId },
-      select: {
-        id: true,
-        conversationId: true,
-        conversation: { select: { externalThreadId: true } },
-      },
+      select: { id: true, conversationId: true },
     });
+    const crmPinnedConvIds = new Set(crmPinned.map((p) => p.conversationId));
 
-    // Debug log — sample 3 IDs mỗi bên để so format khi mismatch
-    if (zaloThreadIds.length > 0 && zaloMatchedConvIds.size === 0) {
-      const sampleZalo = zaloThreadIds.slice(0, 3);
-      const sampleCrm = await prisma.conversation.findMany({
-        where: { zaloAccountId: accountId, externalThreadId: { not: null } },
-        select: { externalThreadId: true },
-        take: 3,
-      });
-      logger.warn(`[pin-reconcile:${accountId}] no match! sample zalo=${JSON.stringify(sampleZalo)} | sample CRM=${JSON.stringify(sampleCrm.map(c => c.externalThreadId))}`);
-    }
-
-    // 5. Diff — SAFE remove: chỉ xoá pin CRM khi conv đó có externalThreadId và
-    //    externalThreadId KHÔNG có trong Zalo list. Pin không có externalThreadId
-    //    → skip (chưa sync với Zalo, không thể compare).
-    const toAdd = [...zaloMatchedConvIds].filter((id) => !crmPinned.some(p => p.conversationId === id));
-    const toRemove: string[] = [];
-    for (const p of crmPinned) {
-      const ext = p.conversation?.externalThreadId;
-      // SKIP nếu conv không có externalThreadId — chưa link Zalo
-      if (!ext) continue;
-      // CHỈ remove khi confirm Zalo không có conv này
-      if (!zaloSet.has(ext)) toRemove.push(p.conversationId);
-    }
+    // 5. Diff
+    const toAdd = [...zaloMatchedConvIds].filter((id) => !crmPinnedConvIds.has(id));
+    const toRemove = [...crmPinnedConvIds].filter((id) => !zaloMatchedConvIds.has(id));
 
     if (toAdd.length === 0 && toRemove.length === 0) {
       logger.info(`[pin-reconcile:${accountId}] in-sync, ${crmPinned.length} pins (zalo=${zaloThreadIds.length}, matched=${zaloMatchedConvIds.size})`);
