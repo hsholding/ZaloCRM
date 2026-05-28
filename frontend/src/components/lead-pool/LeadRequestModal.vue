@@ -144,12 +144,23 @@
         <!-- 4 action buttons compact grid 4 cột -->
         <div class="lrm-actions-wrap">
           <div class="lrm-actions-title">⚡ Bắt đầu liên lạc</div>
-          <div class="lrm-actions-grid lrm-actions-grid-3">
-            <!-- Nút 1: Mở chat Zalo -->
+          <div class="lrm-actions-grid lrm-actions-grid-4">
+            <!-- Nút 1: Đổi nick (vuông nhỏ — hiện popup chọn nick) -->
+            <button
+              class="lrm-action lrm-action-nick"
+              :class="{ active: activePopup === 'chat' }"
+              :title="directChatNickName ? `Đang dùng \&quot;${directChatNickName}\&quot;. Bấm để đổi nick khác` : 'Chọn nick để mở chat'"
+              @click="togglePopup('chat')"
+            >
+              <span class="lrm-action-icon">🔄</span>
+              <span class="lrm-action-nick-label">Đổi<br/>nick</span>
+            </button>
+
+            <!-- Nút 2: Mở chat Zalo (bấm = vào chat ngay với nick auto-lookup) -->
             <button
               class="lrm-action lrm-action-zalo"
-              :class="{ active: activePopup === 'chat' }"
-              @click="togglePopup('chat')"
+              :disabled="pendingNickId !== null"
+              @click="onOpenChatMain"
             >
               <span class="lrm-action-icon">💬</span>
               <span class="lrm-action-text">
@@ -158,7 +169,7 @@
               </span>
             </button>
 
-            <!-- Nút 2: Gọi điện -->
+            <!-- Nút 3: Gọi điện -->
             <a
               v-if="lead.contact.phone"
               :href="`tel:${lead.contact.phone}`"
@@ -178,6 +189,7 @@
               </span>
             </div>
 
+            <!-- Nút 4: Mở trang KH -->
             <button class="lrm-action lrm-action-detail" @click="onOpenContactPage">
               <span class="lrm-action-icon">📄</span>
               <span class="lrm-action-text">
@@ -600,17 +612,26 @@ async function fetchNicksIfNeeded() {
 }
 
 function togglePopup(kind: 'chat') {
-  // 2026-05-28 anh chốt: LUÔN show popup khi bấm Mở chat Zalo. Nick auto-lookup được
-  // gắn ★ "Đang dùng" + xếp đầu để sale thấy ngay default. Sale có quyền chọn nick
-  // khác → BE tự lookup UID qua nick mới → upsert Friend + Conversation → paste câu
-  // chào vào chat đúng nick mới.
+  // 2026-05-28 anh chốt v2: popup tách ra nút "Đổi nick" riêng. Nút "Mở chat Zalo"
+  // chính bấm = vào chat ngay (skip popup). Nút "Đổi nick" này để sale chuyển nick khác.
   if (activePopup.value === kind) { activePopup.value = null; return; }
-  popupLeft.value = 0; // chỉ còn 1 nút có popup → align left mặc định
+  popupLeft.value = 0;
   activePopup.value = kind;
   nickSearch.value = '';
   expandedOwn.value = false;
   expandedTeam.value = false;
   void fetchNicksIfNeeded();
+}
+
+// Nút chính "Mở chat Zalo": có nick auto-lookup → vào chat thẳng, không có → mở popup
+async function onOpenChatMain() {
+  const directId = resolveDirectChatNickId();
+  if (directId) {
+    activePopup.value = 'chat'; // để onPickNick check activePopup
+    await onPickNick(directId);
+    return;
+  }
+  togglePopup('chat');
 }
 
 /**
@@ -709,7 +730,7 @@ async function onReturn() {
 function onDocumentClick(e: MouseEvent) {
   if (!activePopup.value) return;
   const target = e.target as HTMLElement;
-  if (target.closest('.lrm-nick-popup') || target.closest('.lrm-action-zalo')) return;
+  if (target.closest('.lrm-nick-popup') || target.closest('.lrm-action-nick')) return;
   activePopup.value = null;
 }
 
@@ -825,6 +846,8 @@ onBeforeUnmount(() => { document.removeEventListener('click', onDocumentClick); 
 .lrm-actions-wrap { position: relative; }
 .lrm-actions-title { font-size: 11px; color: #64748B; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
 .lrm-actions-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+/* 4 nút: nút 1 (Đổi nick) hẹp vuông, 3 nút còn lại chia đều */
+.lrm-actions-grid-4 { grid-template-columns: 64px 1fr 1fr 1fr; }
 .lrm-action { background: white; border: 1px solid #E5E7EB; border-radius: 9px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; text-decoration: none; color: #0F172A; font-family: inherit; transition: border-color 0.15s, transform 0.1s, box-shadow 0.15s; text-align: left; }
 .lrm-action:hover:not(:disabled):not(.disabled) { transform: translateY(-1px); box-shadow: 0 3px 10px rgba(0,0,0,0.08); }
 .lrm-action:disabled, .lrm-action.disabled { opacity: 0.5; cursor: not-allowed; }
@@ -832,6 +855,12 @@ onBeforeUnmount(() => { document.removeEventListener('click', onDocumentClick); 
 .lrm-action-zalo { border-color: #86EFAC; background: #F0FDF4; }
 .lrm-action-zalo:hover:not(:disabled) { border-color: #10B981; }
 .lrm-action-zalo.active { border-color: #10B981; background: #D1FAE5; }
+/* Nút vuông "Đổi nick" — compact, dọc, icon + label 2 dòng */
+.lrm-action-nick { border-color: #C7D2FE; background: #EEF2FF; padding: 6px 4px; flex-direction: column; gap: 2px; justify-content: center; align-items: center; }
+.lrm-action-nick:hover { border-color: #6366F1; }
+.lrm-action-nick.active { border-color: #4F46E5; background: #E0E7FF; border-width: 2px; }
+.lrm-action-nick .lrm-action-icon { font-size: 18px; }
+.lrm-action-nick-label { font-size: 10px; font-weight: 700; color: #4338CA; line-height: 1.1; text-align: center; }
 .lrm-actions-grid-3 { grid-template-columns: repeat(3, 1fr); }
 .lrm-action-call { border-color: #93C5FD; background: #EFF6FF; }
 .lrm-action-call:hover { border-color: #3B82F6; }
