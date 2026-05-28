@@ -230,6 +230,16 @@ export function attachZaloListener(ctx: ListenerContext): void {
 
   listener.on('connected', () => {
     logger.info(`[zalo:${accountId}] Listener connected`);
+    // Pin reconcile — 2026-05-28: sync ghim hội thoại Zalo↔CRM khi nick connect.
+    // SDK không emit pin event nên dùng on-reconnect sync (lazy, đủ chính xác).
+    void (async () => {
+      try {
+        const { reconcilePinsOnReconnect } = await import('../chat/pin-reconcile.js');
+        await reconcilePinsOnReconnect(accountId, io);
+      } catch (err) {
+        logger.error(`[zalo:${accountId}] pin reconcile error:`, err);
+      }
+    })();
   });
 
   // DEBUG 2026-05-22: catch-all log để verify ListenerEvents nào fire trong thực tế.

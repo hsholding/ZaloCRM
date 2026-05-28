@@ -77,12 +77,12 @@
 
         <div class="ctx-divider"></div>
 
-        <!-- Ghim -->
+        <!-- Ghim hội thoại — Zalo SDK chỉ pin conversation, không pin message riêng -->
         <button class="ctx-item is-primary" role="menuitem" @click="onAction('pin')">
           <svg class="ctx-item__icon" viewBox="0 0 24 24" fill="currentColor">
             <path d="M16 9V4l1-1V2H7v1l1 1v5L6 11v2h5.2v7h1.6v-7H18v-2l-2-2z"/>
           </svg>
-          <span class="ctx-item__label">{{ isPinned ? 'Bỏ ghim' : 'Ghim' }}</span>
+          <span class="ctx-item__label">{{ isPinned ? 'Bỏ ghim hội thoại' : 'Ghim hội thoại' }}</span>
         </button>
       </div>
     </div>
