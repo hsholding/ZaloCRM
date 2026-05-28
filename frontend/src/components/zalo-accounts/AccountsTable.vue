@@ -137,23 +137,41 @@
             </div>
           </td>
           <td>
-            <!-- Phase metrics layer 2026-05-22: 5 mini-chips breakdown. Click row → detail drawer tab "Số liệu" -->
-            <div v-if="acct.metricsToday" class="metrics-chips">
-              <span class="mc-chip recv" :title="`Nhận: ${acct.metricsToday.msgReceivedFromFriends} bạn / ${acct.metricsToday.msgReceivedFromStrangers} lạ`">
-                📥 {{ acct.metricsToday.msgReceivedFromFriends + acct.metricsToday.msgReceivedFromStrangers }}
-              </span>
-              <span class="mc-chip sent" :title="`Sale gửi: ${acct.metricsToday.msgSentByUser}`">
-                📤 {{ acct.metricsToday.msgSentByUser }}
-              </span>
-              <span v-if="acct.metricsToday.msgSentByBot > 0" class="mc-chip bot" :title="`Bot gửi: ${acct.metricsToday.msgSentByBot}`">
-                🤖 {{ acct.metricsToday.msgSentByBot }}
-              </span>
-              <span v-if="acct.metricsToday.friendReqSent > 0" class="mc-chip friend" :title="`Friend-add: ${acct.metricsToday.friendReqSent} sent / ${acct.metricsToday.friendReqAccepted} accept`">
-                🤝 {{ acct.metricsToday.friendReqSent }}
-              </span>
-              <span v-if="acct.metricsToday.phoneSearchTotal > 0" class="mc-chip phone" :title="`Phone search: ${acct.metricsToday.phoneSearchTotal} total / ${acct.metricsToday.phoneSearchFoundZalo} found`">
-                🔍 {{ acct.metricsToday.phoneSearchTotal }}
-              </span>
+            <!-- Phase Hôm nay redesign 2026-05-28: mini 4-col table.
+                 4 metric × 4 col: Loại · Nguồn 1 · Nguồn 2 · Σ.
+                 📥 Đến: 👥 bạn / 🕵🏽 lạ. Còn lại: 👤 sale / 🤖 bot.
+                 Click row → drawer chi tiết (vẫn giữ qua @click onRowClick). -->
+            <div v-if="acct.metricsToday" class="hn-mt">
+              <div class="hn-mt-head">
+                <div class="h label">Loại</div>
+                <div class="h">Nguồn 1</div>
+                <div class="h">Nguồn 2</div>
+                <div class="h total">Σ</div>
+              </div>
+              <div class="hn-mt-row" :title="`Đến: ${acct.metricsToday.msgReceivedFromFriends} bạn / ${acct.metricsToday.msgReceivedFromStrangers} lạ`">
+                <div class="label"><span class="em">📥</span>Đến</div>
+                <div class="friend" :class="{ zero: acct.metricsToday.msgReceivedFromFriends === 0 }"><span class="cell-icon">👥</span>{{ acct.metricsToday.msgReceivedFromFriends }}</div>
+                <div class="stranger" :class="{ zero: acct.metricsToday.msgReceivedFromStrangers === 0 }"><span class="cell-icon">🕵🏽</span>{{ acct.metricsToday.msgReceivedFromStrangers }}</div>
+                <div class="total" :class="{ zero: acct.metricsToday.msgReceivedTotal === 0 }">{{ acct.metricsToday.msgReceivedTotal }}</div>
+              </div>
+              <div class="hn-mt-row" :title="`Đi: ${acct.metricsToday.msgSentByUser} sale / ${acct.metricsToday.msgSentByBot} bot`">
+                <div class="label"><span class="em">📤</span>Đi</div>
+                <div class="user" :class="{ zero: acct.metricsToday.msgSentByUser === 0 }"><span class="cell-icon">👤</span>{{ acct.metricsToday.msgSentByUser }}</div>
+                <div class="bot" :class="{ zero: acct.metricsToday.msgSentByBot === 0 }"><span class="cell-icon">🤖</span>{{ acct.metricsToday.msgSentByBot }}</div>
+                <div class="total" :class="{ zero: acct.metricsToday.msgSentTotal === 0 }">{{ acct.metricsToday.msgSentTotal }}</div>
+              </div>
+              <div class="hn-mt-row" :title="`Kết bạn: ${acct.metricsToday.friendReqByUser} thủ công / ${acct.metricsToday.friendReqByBot} auto`">
+                <div class="label"><span class="em">🤝</span>Kết bạn</div>
+                <div class="user" :class="{ zero: acct.metricsToday.friendReqByUser === 0 }"><span class="cell-icon">👤</span>{{ acct.metricsToday.friendReqByUser }}</div>
+                <div class="bot" :class="{ zero: acct.metricsToday.friendReqByBot === 0 }"><span class="cell-icon">🤖</span>{{ acct.metricsToday.friendReqByBot }}</div>
+                <div class="total" :class="{ zero: acct.metricsToday.friendReqSent === 0 }">{{ acct.metricsToday.friendReqSent }}</div>
+              </div>
+              <div class="hn-mt-row" :title="`Tìm KH: ${acct.metricsToday.phoneSearchByUser} thủ công / ${acct.metricsToday.phoneSearchByBot} auto`">
+                <div class="label"><span class="em">🔍</span>Tìm KH</div>
+                <div class="user" :class="{ zero: acct.metricsToday.phoneSearchByUser === 0 }"><span class="cell-icon">👤</span>{{ acct.metricsToday.phoneSearchByUser }}</div>
+                <div class="bot" :class="{ zero: acct.metricsToday.phoneSearchByBot === 0 }"><span class="cell-icon">🤖</span>{{ acct.metricsToday.phoneSearchByBot }}</div>
+                <div class="total" :class="{ zero: acct.metricsToday.phoneSearchTotal === 0 }">{{ acct.metricsToday.phoneSearchTotal }}</div>
+              </div>
             </div>
             <span v-else class="muted-italic">—</span>
           </td>
@@ -584,21 +602,69 @@ tbody tr.alert:hover { background: #FFF5F5 }
 
 /* Phase metrics layer 2026-05-22 — cột "Hôm nay" mini-chips */
 .th-hint { font-weight: 400; color: #9CA3AF; font-size: 11px; margin-left: 4px; letter-spacing: 1px; }
-.metrics-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.mc-chip {
-  display: inline-flex; align-items: center; gap: 2px;
-  font-size: 11px; font-weight: 600;
-  padding: 2px 6px; border-radius: 9999px;
-  border: 1px solid transparent;
+/* ═══════════ Phase Hôm nay redesign 2026-05-28 — mini 4-col table ═══════════ */
+.hn-mt {
+  border: 1px solid #F3F4F6;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1.3fr 0.95fr 0.95fr 0.8fr;
   font-variant-numeric: tabular-nums;
-  cursor: help;
-  white-space: nowrap;
+  min-width: 240px;
+  max-width: 320px;
 }
-.mc-chip.recv  { background: #F1F5F9; color: #475569; border-color: #E2E8F0; }
-.mc-chip.sent  { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
-.mc-chip.bot   { background: #F5F3FF; color: #6D28D9; border-color: #C4B5FD; }
-.mc-chip.friend{ background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; }
-.mc-chip.phone { background: #ECFEFF; color: #0E7490; border-color: #A5F3FC; }
+.hn-mt-head { display: contents; }
+.hn-mt-head .h {
+  background: #F9FAFB;
+  padding: 4px 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid #F3F4F6;
+}
+.hn-mt-head .h.label { justify-content: flex-start; padding-left: 8px; }
+.hn-mt-head .h.total { background: rgba(41, 98, 255, 0.08); color: #2962FF; }
+
+.hn-mt-row { display: contents; cursor: help; }
+.hn-mt-row > div {
+  padding: 5px 6px;
+  border-bottom: 1px solid #F3F4F6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1F2937;
+}
+.hn-mt-row > div.label {
+  background: #F9FAFB;
+  font-size: 10.5px;
+  color: #374151;
+  font-weight: 500;
+  justify-content: flex-start;
+  padding-left: 8px;
+  gap: 5px;
+}
+.hn-mt-row > div.label .em { font-size: 12px; }
+.hn-mt-row > div.total {
+  background: rgba(41, 98, 255, 0.04);
+  color: #2962FF;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+.hn-mt-row > div.user { color: #2962FF; background: rgba(41, 98, 255, 0.06); }
+.hn-mt-row > div.bot { color: #F59E0B; background: rgba(245, 158, 11, 0.08); }
+.hn-mt-row > div.friend { color: #047857; background: rgba(16, 185, 129, 0.06); }
+.hn-mt-row > div.stranger { color: #B45309; background: rgba(245, 158, 11, 0.06); }
+.hn-mt-row > div.zero { color: #D1D5DB; font-weight: 400; }
+.hn-mt-row > div .cell-icon { opacity: 0.75; font-size: 11px; line-height: 1; }
+.hn-mt-row:last-of-type > div { border-bottom: 0; }
 
 /* Group row (groupByDept=true) */
 .group-row td {

@@ -24,11 +24,18 @@ export interface NickDayMetrics {
   friendReqAccepted: number;
   friendReqRejected: number;
   friendReqPending: number;
+  // 2026-05-28: Split user/bot — TODO schema chưa có FriendshipAttempt.source,
+  // tạm tất cả vào byUser, byBot=0 cho tới khi Marketing engine track.
+  friendReqByUser: number;
+  friendReqByBot: number;
 
   // Phone search (từ PhoneSearchEvent)
   phoneSearchTotal: number;
   phoneSearchFoundZalo: number;
   phoneSearchNoZalo: number;
+  // 2026-05-28: Split via userId NULL/NOT NULL (NULL = automation lookup).
+  phoneSearchByUser: number;
+  phoneSearchByBot: number;
 }
 
 const ZERO_METRICS: NickDayMetrics = {
@@ -42,9 +49,13 @@ const ZERO_METRICS: NickDayMetrics = {
   friendReqAccepted: 0,
   friendReqRejected: 0,
   friendReqPending: 0,
+  friendReqByUser: 0,
+  friendReqByBot: 0,
   phoneSearchTotal: 0,
   phoneSearchFoundZalo: 0,
   phoneSearchNoZalo: 0,
+  phoneSearchByUser: 0,
+  phoneSearchByBot: 0,
 };
 
 // In-memory cache TTL 60s. Key: `${accountId}:${dayUtcMs}`.
@@ -86,8 +97,9 @@ export async function getNickDayMetrics(
 
   const dayEnd = endOfDayUtc(day);
 
-  // Query 4 nguồn parallel: messages by category, friendship attempts, phone search, friend-status join
-  const [msgRows, friendReqRows, phoneRows, msgFromFriends, msgFromStrangers] = await Promise.all([
+  // Query nguồn parallel: messages by category, friendship attempts, phone search,
+  // friend-status join, phone search split by userId (manual vs automation).
+  const [msgRows, friendReqRows, phoneRows, msgFromFriends, msgFromStrangers, phoneByUserCount, phoneByBotCount] = await Promise.all([
     // Messages aggregate by (senderType, sentVia)
     prisma.message.groupBy({
       by: ['senderType', 'sentVia'],
@@ -147,6 +159,14 @@ export async function getNickDayMetrics(
         AND m.sent_at < ${dayEnd}
         AND f.id IS NULL
     `,
+
+    // Phone search split by userId: NULL = automation, NOT NULL = manual user.
+    prisma.phoneSearchEvent.count({
+      where: { accountId, occurredAt: { gte: day, lt: dayEnd }, userId: { not: null } },
+    }),
+    prisma.phoneSearchEvent.count({
+      where: { accountId, occurredAt: { gte: day, lt: dayEnd }, userId: null },
+    }),
   ]);
 
   const metrics: NickDayMetrics = { ...ZERO_METRICS };
@@ -180,6 +200,10 @@ export async function getNickDayMetrics(
       metrics.friendReqPending += count;
     }
   }
+  // 2026-05-28: tạm tất cả vào byUser cho tới khi schema có FriendshipAttempt.source.
+  // Khi Marketing engine track → migrate sang split thực sự.
+  metrics.friendReqByUser = metrics.friendReqSent;
+  metrics.friendReqByBot = 0;
 
   // PhoneSearchEvent
   for (const r of phoneRows) {
@@ -188,6 +212,8 @@ export async function getNickDayMetrics(
     if (r.result === 'found_zalo') metrics.phoneSearchFoundZalo += count;
     else if (r.result === 'no_zalo') metrics.phoneSearchNoZalo += count;
   }
+  metrics.phoneSearchByUser = phoneByUserCount;
+  metrics.phoneSearchByBot = phoneByBotCount;
 
   cache.set(k, { metrics, expiresAt: Date.now() + CACHE_TTL_MS });
   return metrics;

@@ -69,14 +69,21 @@ export interface TeamStats {
 export interface NickMetricsToday {
   msgReceivedFromFriends: number;
   msgReceivedFromStrangers: number;
+  msgReceivedTotal: number;
   msgSentByUser: number;
   msgSentByBot: number;
+  msgSentTotal: number;
   friendReqSent: number;
   friendReqAccepted: number;
   friendReqRejected: number;
+  // 2026-05-28 split user vs bot
+  friendReqByUser: number;
+  friendReqByBot: number;
   phoneSearchTotal: number;
   phoneSearchFoundZalo: number;
   phoneSearchNoZalo: number;
+  phoneSearchByUser: number;
+  phoneSearchByBot: number;
 }
 
 export interface UptimeBucket {
