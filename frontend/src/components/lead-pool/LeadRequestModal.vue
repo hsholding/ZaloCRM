@@ -167,8 +167,8 @@
             >
               <span class="lrm-action-icon">💬</span>
               <span class="lrm-action-text">
-                <span class="lrm-action-title">Mở chat Zalo</span>
-                <span class="lrm-action-sub">{{ lookupZaloDead ? '❌ Không tìm ra' : 'Paste sẵn câu chào' }}</span>
+                <span class="lrm-action-title">{{ directChatNickName ? 'Mở chat Zalo →' : 'Mở chat Zalo' }}</span>
+                <span class="lrm-action-sub">{{ lookupZaloDead ? '❌ Không tìm ra' : (directChatNickName ? `Vào chat qua "${directChatNickName}"` : 'Chọn nick để mở') }}</span>
               </span>
             </button>
 
@@ -575,6 +575,16 @@ async function fetchNicksIfNeeded() {
 }
 
 function togglePopup(kind: 'chat' | 'find') {
+  // 2026-05-28: bấm "Mở chat Zalo" khi đã có nick (autoLookup.nickId hoặc Friend per-nick
+  // của sale current) → mở thẳng chat, KHÔNG hiện popup chọn nick. Anh chốt: đã biết nick
+  // nào dùng được rồi thì chọn nick khác cũng vô nghĩa.
+  if (kind === 'chat' && props.lead) {
+    const directNickId = resolveDirectChatNickId();
+    if (directNickId) {
+      void openChatDirect(directNickId);
+      return;
+    }
+  }
   if (activePopup.value === kind) { activePopup.value = null; return; }
   // Sau reorder 2026-05-27: find = button 1 (left=0), chat = button 2 (left=220)
   popupLeft.value = kind === 'find' ? 0 : 220;
@@ -583,6 +593,68 @@ function togglePopup(kind: 'chat' | 'find') {
   expandedOwn.value = false;
   expandedTeam.value = false;
   void fetchNicksIfNeeded();
+}
+
+/**
+ * Resolve nick để mở chat trực tiếp (skip popup):
+ *   1. autoLookup.nickId — nick BE auto lookup khi nhận lead
+ *   2. friendsByCurrentSale[0].zaloAccountId — Friend per-nick có sẵn của sale current
+ *   3. null → cần popup chọn nick
+ */
+function resolveDirectChatNickId(): string | null {
+  const auto = (props.lead as any)?.autoLookup;
+  if (auto?.found && auto?.nickId) return auto.nickId;
+  const friends = (props.lead as any)?.friendsByCurrentSale;
+  if (Array.isArray(friends) && friends.length > 0 && friends[0]?.zaloAccountId) {
+    return friends[0].zaloAccountId;
+  }
+  return null;
+}
+
+// Tên nick để hiển thị trên nút "Mở chat Zalo" — null = cần popup chọn
+const directChatNickName = computed<string | null>(() => {
+  if (!props.lead?.hasZaloFromMyNick) return null;
+  const auto = (props.lead as any)?.autoLookup;
+  if (auto?.nickUsed) return auto.nickUsed;
+  const friends = (props.lead as any)?.friendsByCurrentSale;
+  if (Array.isArray(friends) && friends.length > 0) {
+    return friends[0]?.zaloAccount?.displayName ?? null;
+  }
+  return null;
+});
+
+async function openChatDirect(zaloAccountId: string) {
+  if (!props.lead) return;
+  pendingNickId.value = zaloAccountId;
+  clearMessages();
+  pushRecentNick(zaloAccountId);
+  try {
+    const { data } = await api.post(`/lead-pool/${props.lead.leadRequestId}/open-chat`, { zaloAccountId });
+    if (data?.canChat && data.conversationId) {
+      const draft = primarySuggestion.value;
+      router.push({
+        path: `/chat/${data.conversationId}`,
+        query: draft ? { draft: draft.slice(0, 600) } : undefined,
+      });
+      emit('close');
+    } else if (data?.canChat) {
+      actionInfo.value = `Tìm thấy KH qua nick "${data.nickDisplayName}". Mở trang KH...`;
+      setTimeout(() => {
+        if (props.lead?.contact.id) router.push(`/contacts/${props.lead.contact.id}/activity`);
+        emit('close');
+      }, 700);
+    } else if (data?.reason === 'no_zalo') {
+      lookupZaloDead.value = true;
+      shouldPulseCall.value = true;
+      actionError.value = data.message || 'KH không bật tìm kiếm/kết bạn Zalo qua SĐT. Hãy thử bằng Sale Phone nhé!';
+    } else {
+      actionError.value = data?.message || 'Không mở được chat';
+    }
+  } catch (err: any) {
+    actionError.value = err?.response?.data?.error || 'Mở chat thất bại';
+  } finally {
+    pendingNickId.value = null;
+  }
 }
 
 function clearMessages() {
