@@ -92,6 +92,11 @@ import { systemNotifyRoutes } from './modules/system-notifications/system-notify
 import { userCreateWithZaloRoutes } from './modules/system-notifications/user-create-with-zalo-routes.js';
 import { leadPoolRoutes } from './modules/lead-pool/lead-pool-routes.js';
 import { startLeadPoolCron } from './modules/lead-pool/lead-pool-service.js';
+// Phase Multi-Source Lead Ads 2026-05-27 — FB adapter + outbox worker
+import { fbLeadAdsRoutes } from './modules/integrations/facebook-leadads/fb-routes.js';
+import { fbIntegrationRoutes } from './modules/integrations/facebook-leadads/fb-oauth.js';
+import { processFbWebhookLog } from './modules/integrations/facebook-leadads/fb-adapter.js';
+import { startOutboxWorker, registerLogProcessor } from './modules/integrations/_shared/outbox-worker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -208,6 +213,9 @@ async function bootstrap() {
   await app.register(systemNotifyRoutes);
   await app.register(userCreateWithZaloRoutes);
   await app.register(leadPoolRoutes);
+  // Phase Multi-Source Lead Ads 2026-05-27 — FB Lead Ads webhook + OAuth/status
+  await app.register(fbLeadAdsRoutes);
+  await app.register(fbIntegrationRoutes);
   await app.register(searchRoutes);
   await app.register(publicApiRoutes);
   await app.register(webhookSettingsRoutes);
@@ -304,6 +312,10 @@ async function bootstrap() {
     startInternalContactCleanupCron();
     // Phase Lead Pool 2026-05-24 — auto-return expired leads 2am daily
     startLeadPoolCron();
+    // Phase Multi-Source Lead Ads 2026-05-27 — outbox worker (LISTEN/NOTIFY + 30s poll)
+    // dispatch fb webhook logs → Graph API fetch → normalize → route → insert entry.
+    registerLogProcessor('fb-leadads', processFbWebhookLog);
+    startOutboxWorker().catch((err) => logger.error('[outbox-worker] startup failed:', err));
     await eventBuffer.start(io);
     // Phase 7 — Automation engine (event bus + materializer + task worker + 3 action handlers)
     if (config.nodeEnv !== 'test') {

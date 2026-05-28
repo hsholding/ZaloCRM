@@ -147,6 +147,41 @@ interface EligibilityResult {
   config: PoolConfig;
 }
 
+/**
+ * Calendar day VN (Asia/Ho_Chi_Minh UTC+7). 00:00 VN → reset quota.
+ * Memory rule feedback_timezone_vietnam: tất cả counter phải reset theo giờ VN.
+ */
+function startOfTodayVN(): Date {
+  const now = new Date();
+  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  vnNow.setUTCHours(0, 0, 0, 0);
+  return new Date(vnNow.getTime() - 7 * 60 * 60 * 1000);
+}
+
+function todayDateKeyVN(): string {
+  const now = new Date();
+  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  return `${vnNow.getUTCFullYear()}-${String(vnNow.getUTCMonth() + 1).padStart(2, '0')}-${String(vnNow.getUTCDate()).padStart(2, '0')}`;
+}
+
+async function getBonusQuotaTodayVN(userId: string): Promise<number> {
+  const agg = await prisma.leadPoolBonusQuota.aggregate({
+    where: { userId, dateKey: todayDateKeyVN() },
+    _sum: { bonusCount: true },
+  });
+  return agg._sum.bonusCount ?? 0;
+}
+
+/** VN convention: tên riêng = từ cuối, proper case. "Phạm Chí Thành" → "Thành". */
+function vietnameseFirstName(fullName: string | null): string {
+  if (!fullName) return '';
+  const trimmed = fullName.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return '';
+  const parts = trimmed.split(' ');
+  const last = parts[parts.length - 1];
+  return last.charAt(0).toUpperCase() + last.slice(1).toLowerCase();
+}
+
 export async function checkEligibility(orgId: string, userId: string): Promise<EligibilityResult> {
   const config = await getOrCreateConfig(orgId);
 
@@ -154,12 +189,16 @@ export async function checkEligibility(orgId: string, userId: string): Promise<E
     return { canRequest: false, reason: 'disabled', remainingToday: 0, config };
   }
 
-  // 1. Daily cap
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const todayCount = await prisma.leadRequest.count({
-    where: { requestedByUserId: userId, requestedAt: { gte: since24h } },
-  });
-  const remainingToday = Math.max(0, config.maxRequestsPerDay - todayCount);
+  // 1. Daily cap — calendar day VN + bonus quota từ admin/manager grant
+  const startToday = startOfTodayVN();
+  const [todayCount, bonusToday] = await Promise.all([
+    prisma.leadRequest.count({
+      where: { requestedByUserId: userId, requestedAt: { gte: startToday } },
+    }),
+    getBonusQuotaTodayVN(userId),
+  ]);
+  const effectiveCap = config.maxRequestsPerDay + bonusToday;
+  const remainingToday = Math.max(0, effectiveCap - todayCount);
   if (remainingToday === 0) {
     return { canRequest: false, reason: 'daily_cap', remainingToday: 0, config };
   }
@@ -184,22 +223,43 @@ export async function checkEligibility(orgId: string, userId: string): Promise<E
       // Lấy thêm expiresAt + phone từ DB cho FE countdown thu hồi + render text
       const fullLead = await prisma.leadRequest.findUnique({
         where: { id: lastRequest.id },
-        select: { expiresAt: true, contact: { select: { phone: true, phoneNormalized: true } } },
+        select: { expiresAt: true, previousAssigneeId: true, requestedByUserId: true, contact: { select: { phone: true, phoneNormalized: true } } },
       });
-      return {
-        canRequest: false,
-        reason: 'unsubmitted_note',
-        remainingToday,
-        pendingNoteLead: {
-          leadRequestId: lastRequest.id,
-          contactId: lastRequest.contactId,
-          contactName: lastRequest.contact?.crmName ?? lastRequest.contact?.fullName ?? null,
-          contactPhone: fullLead?.contact?.phone ?? null,
-          requestedAt: lastRequest.requestedAt,
-          expiresAt: fullLead?.expiresAt ?? null,
-        },
-        config,
-      };
+
+      // Lazy reaper 2026-05-28: lead quá expiresAt → auto release ngay,
+      // không khoá sale ở pending. Cron daily 2am là backup; on-demand ở đây để FE
+      // responsive khi countdown vừa hết — không cần đợi 2am.
+      if (fullLead?.expiresAt && fullLead.expiresAt.getTime() <= Date.now()) {
+        await prisma.leadRequest.update({
+          where: { id: lastRequest.id },
+          data: {
+            releaseReason: 'auto_return',
+            autoReturnedAt: new Date(),
+            noteContent: 'Sale không note quá hạn — auto trả về pool (lazy reaper)',
+          },
+        });
+        // Chỉ rollback Contact.assignedUserId nếu CURRENT owner = requester (HIGH-3 pattern)
+        await prisma.contact.updateMany({
+          where: { id: lastRequest.contactId, assignedUserId: fullLead.requestedByUserId },
+          data: { assignedUserId: fullLead.previousAssigneeId },
+        }).catch(() => { /* silent — contact có thể đã re-assigned */ });
+        // Fall through → eligibility OK (không return pending nữa)
+      } else {
+        return {
+          canRequest: false,
+          reason: 'unsubmitted_note',
+          remainingToday,
+          pendingNoteLead: {
+            leadRequestId: lastRequest.id,
+            contactId: lastRequest.contactId,
+            contactName: lastRequest.contact?.crmName ?? lastRequest.contact?.fullName ?? null,
+            contactPhone: fullLead?.contact?.phone ?? null,
+            requestedAt: lastRequest.requestedAt,
+            expiresAt: fullLead?.expiresAt ?? null,
+          },
+          config,
+        };
+      }
     }
 
     if (elapsed < cooldownMs) {
@@ -372,7 +432,7 @@ function pickTopRandom(candidates: PriorityCandidate[]): PriorityCandidate | nul
 /**
  * Build full payload sale thấy khi nhận lead — hoành tráng theo design.
  */
-async function buildLeadPayload(contactId: string) {
+async function buildLeadPayload(contactId: string, saleFullName: string | null = null) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
     include: {
@@ -447,16 +507,21 @@ async function buildLeadPayload(contactId: string) {
       totalMessages: contact.totalInbound + contact.totalOutbound,
       hadHotMoment: false, // TODO: derive từ historical status timeline (phase 2)
     },
-    suggestedOpenings: buildSuggestedOpenings(contact),
+    suggestedOpenings: buildSuggestedOpenings(contact, saleFullName),
   };
 }
 
-function buildSuggestedOpenings(contact: { crmName: string | null; fullName: string | null }): string[] {
-  const name = contact.crmName ?? contact.fullName ?? 'anh/chị';
+function buildSuggestedOpenings(
+  contact: { crmName: string | null; fullName: string | null },
+  saleFullName: string | null,
+): string[] {
+  const contactName = vietnameseFirstName(contact.crmName ?? contact.fullName) || 'anh/chị';
+  const sale = vietnameseFirstName(saleFullName);
+  const saleIntro = sale ? `em ${sale}` : 'em';
   return [
-    `Chào ${name}, em là sale chăm sóc tiếp tài khoản này. Em đọc lại lịch sử thấy mình đã quan tâm dự án trước đây, không biết hiện tại anh/chị còn nhu cầu không ạ?`,
-    `Chào ${name}, lâu rồi mình chưa nói chuyện. Em mới có thông tin cập nhật về dự án mà mình từng quan tâm, em gửi để anh/chị tham khảo nhé?`,
-    `Chào ${name}, em phụ trách CSKH tài khoản này. Bên em đang có ưu đãi mới, không biết anh/chị có thuận tiện 5 phút để em chia sẻ không ạ?`,
+    `Chào ${contactName}, ${saleIntro} là sale chăm sóc tiếp tài khoản của anh/chị. Em đọc lại lịch sử thấy mình đã quan tâm dự án trước đây, không biết hiện tại anh/chị còn nhu cầu không ạ?`,
+    `Chào ${contactName}, ${saleIntro} bên CSKH dự án — lâu rồi mình chưa nói chuyện. Em mới có thông tin cập nhật, gửi để anh/chị tham khảo nhé?`,
+    `Chào ${contactName}, ${saleIntro} phụ trách CSKH tài khoản này. Bên em đang có ưu đãi mới, anh/chị có thuận tiện 5 phút để em chia sẻ không ạ?`,
   ];
 }
 
@@ -500,13 +565,20 @@ export async function requestLead(args: { orgId: string; userId: string }) {
     const lockKey = userLockKey(args.userId);
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(123::int, ${lockKey}::int)`);
 
-    // 2. Re-validate eligibility INSIDE TX (Codex HIGH-1)
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const todayCount = await tx.leadRequest.count({
-      where: { requestedByUserId: args.userId, requestedAt: { gte: since24h } },
-    });
-    if (todayCount >= config.maxRequestsPerDay) {
-      throw new LeadPoolError(429, 'daily_cap', `Hết quota ${config.maxRequestsPerDay} lead hôm nay`);
+    // 2. Re-validate eligibility INSIDE TX — calendar day VN + bonus quota
+    const startToday = startOfTodayVN();
+    const [todayCount, bonusToday] = await Promise.all([
+      tx.leadRequest.count({
+        where: { requestedByUserId: args.userId, requestedAt: { gte: startToday } },
+      }),
+      prisma.leadPoolBonusQuota.aggregate({
+        where: { userId: args.userId, dateKey: todayDateKeyVN() },
+        _sum: { bonusCount: true },
+      }).then((r) => r._sum.bonusCount ?? 0),
+    ]);
+    const effectiveCap = config.maxRequestsPerDay + bonusToday;
+    if (todayCount >= effectiveCap) {
+      throw new LeadPoolError(429, 'daily_cap', `Hết quota ${effectiveCap} lead hôm nay (đã nhận ${todayCount})`);
     }
     const lastRequest = await tx.leadRequest.findFirst({
       where: { requestedByUserId: args.userId },
@@ -613,7 +685,12 @@ export async function requestLead(args: { orgId: string; userId: string }) {
     };
   }, { timeout: 15000 });
 
-  const payload = await buildLeadPayload(result.contactId);
+  // Personalize câu gợi ý theo tên sale (memory: vietnameseFirstName)
+  const saleUser = await prisma.user.findUnique({
+    where: { id: args.userId },
+    select: { fullName: true },
+  });
+  const payload = await buildLeadPayload(result.contactId, saleUser?.fullName ?? null);
   if (!payload) {
     // Contact bị xoá trong khoảnh khắc giữa TX và buildPayload — Codex LOW fix.
     // Rollback assignment để không leak contact bị orphan.
@@ -900,7 +977,7 @@ export async function autoReturnExpiredLeads() {
  * Nếu thấy UID → update Contact.zaloUid + hasZalo=true → sale tiếp tục gửi friend request.
  * Nếu không → cập nhật hasZalo=false để skip cho lần sau.
  */
-export async function findZaloForLead(args: { userId: string; orgId: string; leadRequestId: string }) {
+export async function findZaloForLead(args: { userId: string; orgId: string; leadRequestId: string; zaloAccountId?: string }) {
   const lr = await prisma.leadRequest.findUnique({
     where: { id: args.leadRequestId },
     include: { contact: { select: { id: true, orgId: true, phone: true, phoneNormalized: true, hasZalo: true, zaloLookupAttempts: true } } },
@@ -917,19 +994,33 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
     throw new LeadPoolError(400, 'already_found', 'KH này đã có Zalo trong CRM');
   }
 
-  // Sale's nick OWN connected
-  const myNick = await prisma.zaloAccount.findFirst({
-    where: { ownerUserId: args.userId, orgId: args.orgId, status: 'connected' },
-    orderBy: { lastConnectedAt: 'desc' },
-    select: { id: true, displayName: true },
-  });
+  // Nick để lookup: nếu sale chọn (zaloAccountId) → dùng nick đó. Else fallback first-own.
+  let myNick: { id: string; displayName: string | null } | null = null;
+  if (args.zaloAccountId) {
+    myNick = await prisma.zaloAccount.findFirst({
+      where: { id: args.zaloAccountId, orgId: args.orgId, status: 'connected' },
+      select: { id: true, displayName: true },
+    });
+    if (!myNick) throw new LeadPoolError(400, 'nick_not_available', 'Nick Zalo đã chọn không tồn tại hoặc offline.');
+  } else {
+    myNick = await prisma.zaloAccount.findFirst({
+      where: { ownerUserId: args.userId, orgId: args.orgId, status: 'connected' },
+      orderBy: { lastConnectedAt: 'desc' },
+      select: { id: true, displayName: true },
+    });
+  }
   if (!myNick) {
     throw new LeadPoolError(400, 'no_own_nick', 'Bạn cần kết nối ít nhất 1 nick Zalo trong "Quản lý nick" để tìm Zalo của KH.');
   }
 
   const { zaloOps } = await import('../../shared/zalo-operations.js');
   let foundUid: string | null = null;
-  let extra: { zaloName?: string | null; avatar?: string | null; globalId?: string | null } = {};
+  let extra: {
+    zaloName?: string | null; avatar?: string | null; globalId?: string | null;
+    username?: string | null; gender?: number | null; dob?: string | number | null;
+    bio?: string | null; bizPkg?: any; cover?: string | null;
+    accountStatus?: number | null; isFriend?: boolean | null;
+  } = {};
   try {
     const res = await zaloOps.findUser(myNick.id, phone) as any;
     const u = res || {};
@@ -938,6 +1029,14 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
       zaloName: u.zaloName || u.zalo_name || u.displayName || u.display_name || null,
       avatar: u.avatar || null,
       globalId: u.globalId || null,
+      username: u.username || null,
+      gender: typeof u.gender === 'number' ? u.gender : null,
+      dob: u.dob ?? u.birthday ?? null,
+      bio: u.status || u.aboutMe || u.bio || null,
+      bizPkg: u.bizPkg || u.business || null,
+      cover: u.cover || u.coverUrl || null,
+      accountStatus: typeof u.accountStatus === 'number' ? u.accountStatus : (typeof u.status === 'number' ? u.status : null),
+      isFriend: typeof u.isFr === 'boolean' ? u.isFr : (typeof u.is_fr === 'boolean' ? u.is_fr : null),
     };
   } catch (err: any) {
     logger.warn(`[lead-pool find-zalo] findUser fail: ${err?.message || err}`);
@@ -978,8 +1077,24 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
     found: Boolean(foundUid),
     uid: foundUid,
     zaloName: extra.zaloName,
+    avatar: extra.avatar,
     nickUsed: myNick.displayName,
     suggestSendRequest: Boolean(foundUid),
+    // Pass full Zalo profile để FE render card chi tiết (giống popup info group member)
+    zaloProfile: foundUid ? {
+      uid: foundUid,
+      zaloName: extra.zaloName,
+      username: extra.username,
+      globalId: extra.globalId,
+      avatar: extra.avatar,
+      cover: extra.cover,
+      gender: extra.gender,
+      dob: extra.dob,
+      bio: extra.bio,
+      bizPkg: extra.bizPkg,
+      accountStatus: extra.accountStatus,
+      isFriend: extra.isFriend,
+    } : null,
     duplicateWarning: duplicateContact
       ? `Cảnh báo: SĐT này khớp Zalo với KH "${duplicateContact.fullName || 'không tên'}" đã có trong CRM (sale chăm: ${duplicateContact.assignedUser?.fullName || 'chưa gán'}). Có thể là cùng 1 người dưới 2 row riêng — cân nhắc trả lead về pool.`
       : null,
@@ -993,7 +1108,8 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
  *   - admin/owner: + nick rảnh trong org + sale nào nhận nhiều nhất
  */
 export async function getLeadPoolStats(args: { orgId: string; userId: string; role: string }) {
-  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  // Calendar day VN (Asia/Ho_Chi_Minh 00:00 reset). Trước 2026-05-28 dùng rolling 24h.
+  const since24h = startOfTodayVN();
   const config = await getOrCreateConfig(args.orgId);
 
   // ── My stats (mọi role đều có) ──
@@ -1274,7 +1390,7 @@ async function queryCustomerListPreview(orgId: string, userId: string, limit = 5
  *   3. Nếu chưa có Friend (chưa rõ Zalo) → trả về { canChat: false, reason: 'no_zalo' }
  *      → FE sẽ hiện toast "KH chưa bật tìm kiếm Zalo, hãy gọi điện ngay"
  */
-export async function openChatForLead(args: { userId: string; orgId: string; leadRequestId: string }) {
+export async function openChatForLead(args: { userId: string; orgId: string; leadRequestId: string; zaloAccountId?: string }) {
   const lr = await prisma.leadRequest.findUnique({
     where: { id: args.leadRequestId },
     include: {
@@ -1297,30 +1413,121 @@ export async function openChatForLead(args: { userId: string; orgId: string; lea
     throw new LeadPoolError(403, 'not_owner', 'Không phải lead của bạn');
   }
 
-  // Ưu tiên Friend của chính sale này (nick OWN của sale)
-  const myFriend = lr.contact.friends.find((f) => f.zaloAccount.ownerUserId === args.userId);
-  // Fallback: bất kỳ Friend accepted nào trong org (cross-nick)
-  const anyFriend = myFriend ?? lr.contact.friends[0];
+  // ── Path A: Sale chỉ định nick → lookup bằng nick đó + upsert Friend + upsert Conversation ──
+  if (args.zaloAccountId) {
+    const nick = await prisma.zaloAccount.findFirst({
+      where: { id: args.zaloAccountId, orgId: args.orgId, status: 'connected' },
+      select: { id: true, displayName: true },
+    });
+    if (!nick) {
+      return { canChat: false, reason: 'nick_offline', message: 'Nick Zalo đã chọn không còn online. Hãy chọn nick khác.' };
+    }
+    const phone = lr.contact.phoneNormalized || lr.contact.phone;
+    if (!phone) {
+      return { canChat: false, reason: 'no_phone', message: 'KH chưa có SĐT — không tìm được Zalo. Bổ sung SĐT trước.' };
+    }
 
-  if (!anyFriend) {
-    // Chưa có friend → cần check hasZalo
-    if (lr.contact.hasZalo === false) {
+    // Đã có friend với nick này → skip lookup, upsert conv + return
+    const existingFriend = lr.contact.friends.find((f) => f.zaloAccountId === nick.id);
+    if (existingFriend) {
+      const convRow = await prisma.conversation.upsert({
+        where: { zaloAccountId_externalThreadId: { zaloAccountId: nick.id, externalThreadId: existingFriend.zaloUidInNick } },
+        create: {
+          orgId: args.orgId, zaloAccountId: nick.id, contactId: lr.contact.id,
+          threadType: 'user', externalThreadId: existingFriend.zaloUidInNick, tab: 'main',
+        },
+        update: { contactId: lr.contact.id },
+        select: { id: true },
+      });
       return {
-        canChat: false,
-        reason: 'no_zalo',
-        message: 'KH chưa bật tìm kiếm Zalo. Hãy gọi cho khách bằng điện thoại ngay bạn nhé!',
+        canChat: true, conversationId: convRow.id,
+        zaloAccountId: nick.id, nickDisplayName: nick.displayName,
+        threadId: existingFriend.zaloUidInNick, contactId: lr.contact.id,
+        source: 'existing_friend',
+      };
+    }
+
+    // Lookup UID qua nick đó
+    const { zaloOps } = await import('../../shared/zalo-operations.js');
+    let foundUid: string | null = null;
+    let extra: { zaloName?: string | null; avatar?: string | null; globalId?: string | null } = {};
+    try {
+      const res = await zaloOps.findUser(nick.id, phone) as any;
+      const u = res || {};
+      foundUid = String(u.uid || u.userId || '') || null;
+      extra = {
+        zaloName: u.zaloName || u.zalo_name || u.displayName || u.display_name || null,
+        avatar: u.avatar || null,
+        globalId: u.globalId || null,
+      };
+    } catch (err: any) {
+      logger.warn(`[lead-pool open-chat] findUser fail: ${err?.message || err}`);
+    }
+
+    // Bump attempts + update Contact
+    await prisma.contact.update({
+      where: { id: lr.contact.id },
+      data: {
+        zaloLookupAt: new Date(),
+        ...(foundUid ? { hasZalo: true, zaloUid: foundUid, avatarUrl: extra.avatar ?? undefined } : { hasZalo: false }),
+      },
+    }).catch(() => { /* silent */ });
+
+    if (!foundUid) {
+      return {
+        canChat: false, reason: 'no_zalo',
+        message: 'KH không bật tìm kiếm/kết bạn Zalo qua SĐT. Hãy thử bằng Sale Phone nhé!',
         phone: lr.contact.phone,
       };
     }
+
+    // Upsert Friend (status='none', track per-nick UID)
+    await prisma.friend.upsert({
+      where: { zaloAccountId_zaloUidInNick: { zaloAccountId: nick.id, zaloUidInNick: foundUid } },
+      create: {
+        orgId: args.orgId, zaloAccountId: nick.id, contactId: lr.contact.id,
+        zaloUidInNick: foundUid, zaloDisplayName: extra.zaloName || null,
+        zaloAvatarUrl: extra.avatar || null, friendshipStatus: 'none',
+        zaloGlobalId: extra.globalId || null,
+      },
+      update: {
+        contactId: lr.contact.id,
+        zaloDisplayName: extra.zaloName || undefined,
+        zaloAvatarUrl: extra.avatar || undefined,
+        zaloGlobalId: extra.globalId || undefined,
+      },
+    });
+
+    // Upsert Conversation stub → FE navigate /chat/:convId được liền
+    const convRow = await prisma.conversation.upsert({
+      where: { zaloAccountId_externalThreadId: { zaloAccountId: nick.id, externalThreadId: foundUid } },
+      create: {
+        orgId: args.orgId, zaloAccountId: nick.id, contactId: lr.contact.id,
+        threadType: 'user', externalThreadId: foundUid, tab: 'main',
+      },
+      update: { contactId: lr.contact.id },
+      select: { id: true },
+    });
+
     return {
-      canChat: false,
-      reason: 'not_friended',
-      message: 'KH chưa kết bạn với nick nào của org. Bấm "Tìm Zalo qua SĐT" trước.',
-      phone: lr.contact.phone,
+      canChat: true, conversationId: convRow.id,
+      zaloAccountId: nick.id, nickDisplayName: nick.displayName,
+      threadId: foundUid, contactId: lr.contact.id,
+      source: 'lookup_success', zaloName: extra.zaloName, avatar: extra.avatar,
     };
   }
 
-  // Tìm conversation tương ứng (Friend đã accept → conv có thể tồn tại sẵn)
+  // ── Path B: Sale không chọn nick → fallback Friend có sẵn ──
+  const myFriend = lr.contact.friends.find((f) => f.zaloAccount.ownerUserId === args.userId);
+  const anyFriend = myFriend ?? lr.contact.friends[0];
+
+  if (!anyFriend) {
+    if (lr.contact.hasZalo === false) {
+      return { canChat: false, reason: 'no_zalo', message: 'KH chưa bật tìm kiếm Zalo. Hãy gọi cho khách bằng điện thoại ngay bạn nhé!', phone: lr.contact.phone };
+    }
+    return { canChat: false, reason: 'not_friended', message: 'KH chưa kết bạn với nick nào của org. Chọn nick để tìm trước nhé.', phone: lr.contact.phone };
+  }
+
   const conv = await prisma.conversation.findFirst({
     where: {
       orgId: args.orgId,
@@ -1338,7 +1545,252 @@ export async function openChatForLead(args: { userId: string; orgId: string; lea
     nickDisplayName: anyFriend.zaloAccount.displayName,
     threadId: anyFriend.zaloUidInNick,
     contactId: lr.contact.id,
+    source: 'existing_friend',
   };
+}
+
+/**
+ * listAvailableNicks — list nick Zalo connected để sale chọn khi "Mở chat Zalo" / "Tìm Zalo qua SĐT".
+ * - Sale thường: trả về nick OWN của user (1 row).
+ * - Leader/Deputy: OWN + nick của member trong dept tree dưới quyền (2 rows).
+ * - Admin/Owner: OWN + tất cả nick còn lại trong org (2 rows).
+ * Chỉ trả nick status='connected'.
+ */
+export async function listAvailableNicks(args: { orgId: string; userId: string; role: string }) {
+  const ownNicks = await prisma.zaloAccount.findMany({
+    where: { orgId: args.orgId, ownerUserId: args.userId, status: 'connected' },
+    orderBy: { lastConnectedAt: 'desc' },
+    select: { id: true, displayName: true, avatarUrl: true, lastConnectedAt: true },
+    take: 10,
+  });
+
+  let teamNicks: Array<{ id: string; displayName: string | null; avatarUrl: string | null; ownerName: string | null; lastConnectedAt: Date | null }> = [];
+  let scope: 'sale' | 'leader' | 'admin' = 'sale';
+
+  if (args.role === 'owner' || args.role === 'admin') {
+    scope = 'admin';
+    const rows = await prisma.zaloAccount.findMany({
+      where: { orgId: args.orgId, status: 'connected', ownerUserId: { not: args.userId } },
+      orderBy: { lastConnectedAt: 'desc' },
+      select: { id: true, displayName: true, avatarUrl: true, lastConnectedAt: true, owner: { select: { fullName: true } } },
+      take: 20,
+    });
+    teamNicks = rows.map((r) => ({
+      id: r.id, displayName: r.displayName, avatarUrl: r.avatarUrl,
+      ownerName: r.owner?.fullName ?? null,
+      lastConnectedAt: r.lastConnectedAt,
+    }));
+  } else {
+    const membership = await prisma.departmentMember.findFirst({
+      where: { userId: args.userId, deptRole: { in: ['leader', 'deputy'] } },
+      select: { department: { select: { path: true } } },
+    });
+    if (membership) {
+      scope = 'leader';
+      const subDepts = await prisma.department.findMany({
+        where: { orgId: args.orgId, path: { startsWith: membership.department.path } },
+        select: { id: true },
+      });
+      const subDeptIds = subDepts.map((d) => d.id);
+      const teamMembers = await prisma.departmentMember.findMany({
+        where: { departmentId: { in: subDeptIds }, userId: { not: args.userId } },
+        select: { userId: true },
+      });
+      const teamUserIds = teamMembers.map((m) => m.userId);
+      if (teamUserIds.length) {
+        const rows = await prisma.zaloAccount.findMany({
+          where: { orgId: args.orgId, status: 'connected', ownerUserId: { in: teamUserIds } },
+          orderBy: { lastConnectedAt: 'desc' },
+          select: { id: true, displayName: true, avatarUrl: true, lastConnectedAt: true, owner: { select: { fullName: true } } },
+          take: 20,
+        });
+        teamNicks = rows.map((r) => ({
+          id: r.id, displayName: r.displayName, avatarUrl: r.avatarUrl,
+          ownerName: r.owner?.fullName ?? null,
+          lastConnectedAt: r.lastConnectedAt,
+        }));
+      }
+    }
+  }
+
+  return {
+    scope,
+    ownNicks: ownNicks.map((n) => ({ id: n.id, displayName: n.displayName, avatarUrl: n.avatarUrl, lastConnectedAt: n.lastConnectedAt })),
+    teamNicks,
+  };
+}
+
+/**
+ * Phase 2026-05-28 — Admin/Manager reset quota workflow.
+ * Yêu cầu reviewer phải xem hết noted leads hôm nay → grant bonus 1..maxPerDay.
+ */
+async function canResetQuotaFor(requester: { id: string; role: string; orgId: string }, targetUserId: string): Promise<boolean> {
+  if (requester.role === 'owner' || requester.role === 'admin') return true;
+  const membership = await prisma.departmentMember.findFirst({
+    where: { userId: requester.id, deptRole: { in: ['leader', 'deputy'] } },
+    select: { department: { select: { path: true } } },
+  });
+  if (!membership) return false;
+  const subDepts = await prisma.department.findMany({
+    where: { orgId: requester.orgId, path: { startsWith: membership.department.path } },
+    select: { id: true },
+  });
+  const subDeptIds = subDepts.map((d) => d.id);
+  const targetInTeam = await prisma.departmentMember.findFirst({
+    where: { userId: targetUserId, departmentId: { in: subDeptIds } },
+    select: { userId: true },
+  });
+  return !!targetInTeam;
+}
+
+export async function listSaleNotedLeadsToday(args: {
+  requester: { id: string; role: string; orgId: string };
+  targetUserId: string;
+}) {
+  const allowed = await canResetQuotaFor(args.requester, args.targetUserId);
+  if (!allowed) throw new LeadPoolError(403, 'forbidden', 'Bạn không có quyền reset quota cho user này');
+
+  const startToday = startOfTodayVN();
+  const notedLeads = await prisma.leadRequest.findMany({
+    where: {
+      requestedByUserId: args.targetUserId,
+      requestedAt: { gte: startToday },
+      noteSubmittedAt: { not: null },
+    },
+    orderBy: { requestedAt: 'asc' },
+    select: {
+      id: true, contactId: true, requestedAt: true, noteSubmittedAt: true,
+      noteContent: true, priorityScore: true, source: true,
+      contact: {
+        select: {
+          id: true, fullName: true, crmName: true, phone: true, hasZalo: true,
+          avatarUrl: true, province: true, district: true, ward: true,
+        },
+      },
+    },
+  });
+
+  const previousGrants = await prisma.leadPoolBonusQuota.findMany({
+    where: { userId: args.targetUserId, dateKey: todayDateKeyVN() },
+    select: { reviewedLeadIds: true, bonusCount: true, grantedBy: { select: { fullName: true } }, createdAt: true },
+  });
+  const alreadyReviewedIds = new Set<string>();
+  for (const g of previousGrants) {
+    if (Array.isArray(g.reviewedLeadIds)) {
+      for (const id of g.reviewedLeadIds as string[]) alreadyReviewedIds.add(id);
+    }
+  }
+
+  const targetUser = await prisma.user.findUnique({
+    where: { id: args.targetUserId },
+    select: { id: true, fullName: true, email: true },
+  });
+  const config = await getOrCreateConfig(args.requester.orgId);
+
+  return {
+    targetUser,
+    config: { maxPerDay: config.maxRequestsPerDay },
+    leads: notedLeads.map((l) => ({
+      id: l.id,
+      contactId: l.contactId,
+      contactName: l.contact?.crmName ?? l.contact?.fullName ?? l.contact?.phone ?? 'KH',
+      contactPhone: l.contact?.phone ?? null,
+      contactAvatar: l.contact?.avatarUrl ?? null,
+      contactLocation: [l.contact?.ward, l.contact?.district, l.contact?.province].filter(Boolean).join(', '),
+      hasZalo: l.contact?.hasZalo,
+      requestedAt: l.requestedAt,
+      noteSubmittedAt: l.noteSubmittedAt,
+      noteContent: l.noteContent,
+      priorityScore: l.priorityScore,
+      source: l.source,
+      alreadyReviewed: alreadyReviewedIds.has(l.id),
+    })),
+    previousGrantsToday: previousGrants.map((g) => ({
+      bonusCount: g.bonusCount,
+      grantedByName: g.grantedBy?.fullName ?? null,
+      createdAt: g.createdAt,
+    })),
+  };
+}
+
+export async function adminResetQuota(args: {
+  requester: { id: string; role: string; orgId: string };
+  targetUserId: string;
+  reviewedLeadIds: string[];
+  bonusCount: number;
+  reason?: string;
+}) {
+  const allowed = await canResetQuotaFor(args.requester, args.targetUserId);
+  if (!allowed) throw new LeadPoolError(403, 'forbidden', 'Bạn không có quyền reset quota cho user này');
+
+  if (!Number.isInteger(args.bonusCount) || args.bonusCount < 1) {
+    throw new LeadPoolError(400, 'bad_bonus', 'bonusCount phải là số nguyên >= 1');
+  }
+  const config = await getOrCreateConfig(args.requester.orgId);
+  if (args.bonusCount > config.maxRequestsPerDay) {
+    throw new LeadPoolError(400, 'bad_bonus', `bonusCount tối đa = ${config.maxRequestsPerDay} (max/day trong settings)`);
+  }
+
+  const startToday = startOfTodayVN();
+  const notedToday = await prisma.leadRequest.findMany({
+    where: {
+      requestedByUserId: args.targetUserId,
+      requestedAt: { gte: startToday },
+      noteSubmittedAt: { not: null },
+    },
+    select: { id: true },
+  });
+  const previousReviewedIds = new Set<string>();
+  const previousGrants = await prisma.leadPoolBonusQuota.findMany({
+    where: { userId: args.targetUserId, dateKey: todayDateKeyVN() },
+    select: { reviewedLeadIds: true },
+  });
+  for (const g of previousGrants) {
+    if (Array.isArray(g.reviewedLeadIds)) {
+      for (const id of g.reviewedLeadIds as string[]) previousReviewedIds.add(id);
+    }
+  }
+  const newReviewIds = args.reviewedLeadIds.filter((id) => !previousReviewedIds.has(id));
+  const stillUnreviewed = notedToday
+    .map((l) => l.id)
+    .filter((id) => !previousReviewedIds.has(id) && !newReviewIds.includes(id));
+  if (stillUnreviewed.length > 0) {
+    throw new LeadPoolError(400, 'review_incomplete',
+      `Còn ${stillUnreviewed.length} lead chưa review. Phải xem hết noted leads trước khi cấp thêm quota.`);
+  }
+
+  const reviewer = await prisma.user.findUnique({
+    where: { id: args.requester.id },
+    select: { fullName: true },
+  });
+  const reviewerName = reviewer?.fullName ?? 'Quản lý';
+
+  // Append review note vào mỗi lead vừa review (chỉ lead mới)
+  const now = new Date();
+  for (const leadId of newReviewIds) {
+    const lr = await prisma.leadRequest.findUnique({ where: { id: leadId }, select: { noteContent: true } });
+    if (!lr) continue;
+    const reviewLine = `\n\n— ✅ ${reviewerName} đã review lúc ${now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}`;
+    await prisma.leadRequest.update({
+      where: { id: leadId },
+      data: { noteContent: (lr.noteContent ?? '') + reviewLine },
+    });
+  }
+
+  const bonus = await prisma.leadPoolBonusQuota.create({
+    data: {
+      orgId: args.requester.orgId,
+      userId: args.targetUserId,
+      dateKey: todayDateKeyVN(),
+      bonusCount: args.bonusCount,
+      grantedByUserId: args.requester.id,
+      reviewedLeadIds: newReviewIds,
+      reason: args.reason ?? null,
+    },
+    select: { id: true, bonusCount: true, dateKey: true, createdAt: true },
+  });
+
+  return { success: true, bonus, reviewedCount: newReviewIds.length, reviewerName };
 }
 
 export function startLeadPoolCron() {
