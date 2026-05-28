@@ -435,10 +435,13 @@ const recentNicks = computed(() => {
     .slice(0, RECENT_NICKS_MAX);
 });
 
-// 2026-05-28: nick auto-lookup BE chọn khi nhận lead — xếp đầu popup với ★
+// 2026-05-28: nick "đang dùng" cho popup — xếp đầu với ★.
+// Priority: autoLookup.nickId (BE auto-lookup khi nhận lead) >
+//           friendsByCurrentSale[0].zaloAccountId (Friend per-nick có sẵn từ session trước)
 const currentNick = computed(() => {
   if (!nicksData.value) return null;
-  const nickId = (props.lead as any)?.autoLookup?.nickId;
+  const nickId = (props.lead as any)?.autoLookup?.nickId
+    || ((props.lead as any)?.friendsByCurrentSale?.[0]?.zaloAccountId);
   if (!nickId) return null;
   const all = [...nicksData.value.ownNicks, ...nicksData.value.teamNicks];
   return all.find((n) => n.id === nickId) ?? null;
