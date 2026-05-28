@@ -273,7 +273,9 @@ export function useContacts() {
     status: '',
     statusId: '',
     assignedUserId: '',
-    threadType: '',
+    // Anh chốt 2026-05-28: bảng Khách hàng mặc định lọc User 1-1 (ẩn KH nhóm).
+    // Sale có thể đổi sang "Tất cả" hoặc "Nhóm" bằng dropdown Loại trên toolbar.
+    threadType: 'user',
     hasZalo: '',
     multiNick: '',
     scoreMin: null,
