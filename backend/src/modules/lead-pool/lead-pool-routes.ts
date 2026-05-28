@@ -216,6 +216,18 @@ export async function leadPoolRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // GET /api/v1/lead-pool/:id/payload — rebuild full payload cho pending lead (reopen modal)
+  app.get('/api/v1/lead-pool/:id/payload', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    try {
+      const { getLeadPayload } = await import('./lead-pool-service.js');
+      return await getLeadPayload({ userId: user.id, orgId: user.orgId, leadRequestId: id });
+    } catch (err) {
+      return handle(err, reply);
+    }
+  });
+
   // GET /api/v1/lead-pool/available-nicks — list nick online (own + team if manager/admin)
   app.get('/api/v1/lead-pool/available-nicks', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;

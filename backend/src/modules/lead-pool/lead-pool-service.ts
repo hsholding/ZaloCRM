@@ -1987,6 +1987,52 @@ export async function adminResetQuota(args: {
   return { success: true, bonus, reviewedCount: newReviewIds.length, reviewerName };
 }
 
+/**
+ * 2026-05-28: rebuild full lead payload cho sale's pending lead (reopen modal).
+ * Khác với requestLead, KHÔNG pick contact mới — load existing LeadRequest +
+ * trigger autoLookup + buildLeadPayload đầy đủ (per-nick + gender).
+ * Dùng khi FAB "Nhận Lead" ở pending mode → click → reopen lead cũ với full data.
+ */
+export async function getLeadPayload(args: { userId: string; orgId: string; leadRequestId: string }) {
+  const lr = await prisma.leadRequest.findUnique({
+    where: { id: args.leadRequestId },
+    select: {
+      id: true, contactId: true, requestedByUserId: true, source: true,
+      priorityScore: true, expiresAt: true, requestedAt: true,
+    },
+  });
+  if (!lr) throw new LeadPoolError(404, 'lead_not_found', 'Lead không tồn tại');
+  if (lr.requestedByUserId !== args.userId) {
+    throw new LeadPoolError(403, 'not_owner', 'Không phải lead của bạn');
+  }
+
+  const saleUser = await prisma.user.findUnique({
+    where: { id: args.userId },
+    select: { fullName: true },
+  });
+
+  // Auto-trigger Zalo lookup (cache hit nếu Friend per-nick đã có → no SDK call)
+  const autoLookup = await autoLookupZaloForLead({
+    contactId: lr.contactId,
+    orgId: args.orgId,
+    saleUserId: args.userId,
+  }).catch((err) => {
+    logger.warn(`[get-lead-payload] auto-lookup failed: ${err?.message || err}`);
+    return null;
+  });
+
+  const payload = await buildLeadPayload(lr.contactId, saleUser?.fullName ?? null, args.userId, autoLookup);
+  if (!payload) throw new LeadPoolError(404, 'contact_not_found', 'Contact không tồn tại');
+
+  return {
+    leadRequestId: lr.id,
+    source: lr.source,
+    priorityScore: lr.priorityScore,
+    expiresAt: lr.expiresAt,
+    ...payload,
+  };
+}
+
 export function startLeadPoolCron() {
   function scheduleNext() {
     const now = new Date();

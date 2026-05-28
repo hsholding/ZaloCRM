@@ -278,31 +278,14 @@ async function reopenPendingLead() {
   const pending = state.value.pendingNoteLead;
   if (!pending) return;
   try {
-    const { data } = await api.get(`/contacts/${pending.contactId}`);
-    leadData.value = {
-      leadRequestId: pending.leadRequestId,
-      source: 'forgotten',
-      priorityScore: 0,
-      expiresAt: pending.expiresAt || '',
-      contact: data,
-      previousAssignee: null,
-      friends: data.friends || [],
-      recentNotes: data.notes || [],
-      recentAppointments: data.appointments || [],
-      insights: {
-        daysIdle: null,
-        noShowCount: 0,
-        acceptedFriendCount: (data.friends || []).filter((f: any) => f.friendshipStatus === 'accepted').length,
-        totalMessages: 0,
-        hadHotMoment: false,
-      },
-      suggestedOpenings: [
-        `Chào ${data.crmName || data.fullName || 'anh/chị'}, em là sale chăm sóc tiếp tài khoản này. Em đọc lại lịch sử thấy mình đã quan tâm trước đây, không biết hiện tại anh/chị còn nhu cầu không ạ?`,
-      ],
-    } as LeadPayload;
+    // 2026-05-28: gọi endpoint mới rebuild full payload (hasZaloFromMyNick + autoLookup +
+    // gender personalize). Trước fix: load từ /contacts/:id → thiếu data → tag sai +
+    // câu chào "anh/chị" generic + nút "Mở chat" không biết nick nào.
+    const { data } = await api.get(`/lead-pool/${pending.leadRequestId}/payload`);
+    leadData.value = data as LeadPayload;
     leadOpen.value = true;
-  } catch {
-    showToast('Không tải được lead cũ. Vui lòng F5 lại trang.');
+  } catch (err: any) {
+    showToast(err?.response?.data?.error || 'Không tải được lead cũ. Vui lòng F5 lại trang.');
   }
 }
 
