@@ -38,6 +38,9 @@ interface PoolConfig {
   forceNoteBeforeNext: boolean;
   enabledSources: LeadSource[];
   noteMinLength: number;
+  // 2026-05-28 — array template câu chào. Empty → service fallback DEFAULT_GREETING_TEMPLATES.
+  // Placeholders: {anh_chi} {ac} {ten_kh} {ten_em}. Max 10 câu, mỗi câu ≤500 ký tự.
+  greetingTemplates: string[];
 }
 
 // Bounds cho auto-return: 30 phút (rotate nhanh) → 7 ngày (10080 phút)
@@ -55,6 +58,7 @@ const DEFAULT_CONFIG: PoolConfig = {
   forceNoteBeforeNext: true,
   enabledSources: ['forgotten', 'customer_list'],
   noteMinLength: 20,
+  greetingTemplates: [], // empty → service dùng DEFAULT_GREETING_TEMPLATES
 };
 
 // Codex MEDIUM-2 fix: validate JSON config — Array.isArray + filter known enum.
@@ -82,6 +86,7 @@ export async function getOrCreateConfig(orgId: string): Promise<PoolConfig> {
       forceNoteBeforeNext: Boolean(existing.forceNoteBeforeNext),
       enabledSources: safeStringArray(existing.enabledSources, DEFAULT_CONFIG.enabledSources, VALID_SOURCES) as LeadSource[],
       noteMinLength: Math.max(5, Math.min(500, existing.noteMinLength)),
+      greetingTemplates: safeStringArray(existing.greetingTemplates, []).slice(0, 10).map((s) => s.slice(0, 500)),
     };
   }
   await prisma.leadPoolConfig.create({
@@ -132,6 +137,16 @@ export async function updateConfig(orgId: string, patch: Partial<PoolConfig>): P
   }
   if (Array.isArray(patch.enabledSources)) {
     data.enabledSources = safeStringArray(patch.enabledSources, [], VALID_SOURCES);
+  }
+  if (Array.isArray(patch.greetingTemplates)) {
+    // Validate: ≤10 templates, mỗi câu ≤500 ký tự, trim + bỏ rỗng.
+    const cleaned = patch.greetingTemplates
+      .filter((s): s is string => typeof s === 'string')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .slice(0, 10)
+      .map((s) => s.slice(0, 500));
+    data.greetingTemplates = cleaned;
   }
 
   await prisma.leadPoolConfig.update({ where: { orgId }, data });
@@ -189,32 +204,29 @@ export async function checkEligibility(orgId: string, userId: string): Promise<E
     return { canRequest: false, reason: 'disabled', remainingToday: 0, config };
   }
 
-  // 1. Daily cap — calendar day VN + bonus quota từ admin/manager grant
+  // Quota + last request load song song
   const startToday = startOfTodayVN();
-  const [todayCount, bonusToday] = await Promise.all([
+  const [todayCount, bonusToday, lastRequest] = await Promise.all([
     prisma.leadRequest.count({
       where: { requestedByUserId: userId, requestedAt: { gte: startToday } },
     }),
     getBonusQuotaTodayVN(userId),
+    prisma.leadRequest.findFirst({
+      where: { requestedByUserId: userId },
+      orderBy: { requestedAt: 'desc' },
+      select: { requestedAt: true, id: true, contactId: true, noteSubmittedAt: true, releaseReason: true, contact: { select: { fullName: true, crmName: true } } },
+    }),
   ]);
   const effectiveCap = config.maxRequestsPerDay + bonusToday;
   const remainingToday = Math.max(0, effectiveCap - todayCount);
-  if (remainingToday === 0) {
-    return { canRequest: false, reason: 'daily_cap', remainingToday: 0, config };
-  }
 
-  // 2. Cooldown
-  const lastRequest = await prisma.leadRequest.findFirst({
-    where: { requestedByUserId: userId },
-    orderBy: { requestedAt: 'desc' },
-    select: { requestedAt: true, id: true, contactId: true, noteSubmittedAt: true, releaseReason: true, contact: { select: { fullName: true, crmName: true } } },
-  });
+  // 1. Unsubmitted note ưu tiên HƠN daily_cap — fix 2026-05-28:
+  //    Lead cuối (đụng quota) chưa note thì FAB phải hiện pending mode để sale reopen lại.
+  //    Trước fix: daily_cap return trước → FAB không biết pending → mất lead.
   if (lastRequest) {
     const cooldownMs = config.cooldownMinutes * 60 * 1000;
     const elapsed = Date.now() - lastRequest.requestedAt.getTime();
 
-    // Phase v2 2026-05-27: unsubmitted_note ưu tiên HƠN cooldown — sale phải note xong mới
-    // được làm gì tiếp, kể cả khi hết cooldown. UI cần phone + expiresAt để render text dynamic.
     if (
       config.forceNoteBeforeNext &&
       lastRequest.noteSubmittedAt === null &&
@@ -271,6 +283,11 @@ export async function checkEligibility(orgId: string, userId: string): Promise<E
         config,
       };
     }
+  }
+
+  // 2. Daily cap — chỉ check sau khi pending check đã pass (lead cuối đã noted/returned)
+  if (remainingToday === 0) {
+    return { canRequest: false, reason: 'daily_cap', remainingToday: 0, config };
   }
 
   return { canRequest: true, remainingToday, config };
@@ -461,6 +478,7 @@ async function buildLeadPayload(
   saleFullName: string | null = null,
   saleUserId: string | null = null,
   autoLookup: AutoLookupResult | null = null,
+  greetingTemplates: string[] = [],
 ) {
   const contact = await prisma.contact.findUnique({
     where: { id: contactId },
@@ -549,41 +567,54 @@ async function buildLeadPayload(
       totalMessages: contact.totalInbound + contact.totalOutbound,
       hadHotMoment: false,
     },
-    suggestedOpenings: buildSuggestedOpenings(contact, saleFullName, lookupGender),
+    suggestedOpenings: buildSuggestedOpenings(contact, saleFullName, lookupGender, greetingTemplates),
   };
+}
+
+// Default templates dùng khi config.greetingTemplates rỗng. Anh tự thêm câu mới qua
+// PATCH /lead-pool/config { greetingTemplates: [...] }.
+// Placeholder: {anh_chi} {ac} {ten_kh} {ten_em}.
+export const DEFAULT_GREETING_TEMPLATES: string[] = [
+  'Chào {anh_chi} {ten_kh}, em {ten_em} bên CSKH dự án đây ạ. Em vừa nhận tiếp tài khoản của {ac}, em xem lại thấy {ac} từng quan tâm bên em. Hiện {ac} còn đang tìm hiểu không ạ?',
+  'Chào {anh_chi} {ten_kh}, em {ten_em} đây ạ. Lâu rồi bên em chưa cập nhật thông tin mới cho {ac} — bên em vừa có update mới, em gửi {ac} tham khảo nhé?',
+  'Chào {anh_chi} {ten_kh}, em {ten_em} bên dự án đây ạ. Dạo này {ac} ổn không? Em có ít ưu đãi mới bên em vừa ra, lúc nào {ac} tiện em chia sẻ ngắn ạ.',
+];
+
+// Render 1 template với placeholder values. Bỏ tên KH placeholder nếu thiếu tên.
+function renderGreetingTemplate(
+  tpl: string,
+  vars: { anh_chi: string; ac: string; ten_kh: string; ten_em: string },
+): string {
+  let out = tpl;
+  out = out.replace(/\{anh_chi\}/g, vars.anh_chi);
+  out = out.replace(/\{ac\}/g, vars.ac);
+  out = out.replace(/\{ten_kh\}/g, vars.ten_kh);
+  out = out.replace(/\{ten_em\}/g, vars.ten_em);
+  // Cleanup: nếu ten_kh rỗng → "Anh " → "Anh" (xoá space thừa trước dấu phẩy)
+  out = out.replace(/\s+,/g, ',').replace(/\s{2,}/g, ' ').trim();
+  return out;
 }
 
 function buildSuggestedOpenings(
   contact: { crmName: string | null; fullName: string | null },
   saleFullName: string | null,
   gender: number | null = null,
+  templates: string[] = [],
 ): string[] {
   const contactName = vietnameseFirstName(contact.crmName ?? contact.fullName);
   const sale = vietnameseFirstName(saleFullName);
-  const saleIntro = sale ? `em ${sale}` : 'em';
-  // Personalize theo gender từ Zalo lookup: 0=Nam → "Anh", 1=Nữ → "Chị", null → "anh/chị"
-  let greeting: string;
-  let pronoun: string;
-  if (!contactName) {
-    greeting = 'Chào anh/chị';
-    pronoun = 'anh/chị';
-  } else if (gender === 0) {
-    greeting = `Chào Anh ${contactName}`;
-    pronoun = 'anh';
-  } else if (gender === 1) {
-    greeting = `Chào Chị ${contactName}`;
-    pronoun = 'chị';
-  } else {
-    greeting = `Chào anh/chị ${contactName}`;
-    pronoun = 'anh/chị';
-  }
-  // 3 biến thể: (1) tiếp nhận tài khoản tự nhiên, (2) update thông tin mềm, (3) hỏi thăm + ưu đãi.
-  // Ngắn gọn, mở câu hỏi, không push. Ưu tiên sale dễ paste + KH dễ reply.
-  return [
-    `${greeting}, ${saleIntro} bên CSKH dự án đây ạ. Em vừa nhận tiếp tài khoản của ${pronoun}, em xem lại thấy ${pronoun} từng quan tâm bên em. Hiện ${pronoun} còn đang tìm hiểu không ạ?`,
-    `${greeting}, ${saleIntro} đây ạ. Lâu rồi bên em chưa cập nhật thông tin mới cho ${pronoun} — bên em vừa có update mới, em gửi ${pronoun} tham khảo nhé?`,
-    `${greeting}, ${saleIntro} bên dự án đây ạ. Dạo này ${pronoun} ổn không? Em có ít ưu đãi mới bên em vừa ra, lúc nào ${pronoun} tiện em chia sẻ ngắn ạ.`,
-  ];
+  // Personalize gender: 0=Nam → "Anh", 1=Nữ → "Chị", null → "Anh/Chị" + "anh/chị".
+  let anh_chi: string;
+  let ac: string;
+  if (gender === 0) { anh_chi = 'Anh'; ac = 'anh'; }
+  else if (gender === 1) { anh_chi = 'Chị'; ac = 'chị'; }
+  else { anh_chi = 'Anh/Chị'; ac = 'anh/chị'; }
+
+  // Empty templates → fallback default
+  const list = templates.length > 0 ? templates : DEFAULT_GREETING_TEMPLATES;
+  return list.map((tpl) => renderGreetingTemplate(tpl, {
+    anh_chi, ac, ten_kh: contactName, ten_em: sale,
+  }));
 }
 
 /**
@@ -910,7 +941,8 @@ export async function requestLead(args: { orgId: string; userId: string }) {
     return null;
   });
 
-  const payload = await buildLeadPayload(result.contactId, saleUser?.fullName ?? null, args.userId, autoLookup);
+  const greetingTemplates = Array.isArray(config.greetingTemplates) ? (config.greetingTemplates as string[]) : [];
+  const payload = await buildLeadPayload(result.contactId, saleUser?.fullName ?? null, args.userId, autoLookup, greetingTemplates);
   if (!payload) {
     // Contact bị xoá trong khoảnh khắc giữa TX và buildPayload — Codex LOW fix.
     // Rollback assignment để không leak contact bị orphan.
@@ -2032,10 +2064,10 @@ export async function getLeadPayload(args: { userId: string; orgId: string; lead
     throw new LeadPoolError(403, 'not_owner', 'Không phải lead của bạn');
   }
 
-  const saleUser = await prisma.user.findUnique({
-    where: { id: args.userId },
-    select: { fullName: true },
-  });
+  const [saleUser, config] = await Promise.all([
+    prisma.user.findUnique({ where: { id: args.userId }, select: { fullName: true } }),
+    getOrCreateConfig(args.orgId),
+  ]);
 
   // Auto-trigger Zalo lookup (cache hit nếu Friend per-nick đã có → no SDK call)
   const autoLookup = await autoLookupZaloForLead({
@@ -2047,7 +2079,8 @@ export async function getLeadPayload(args: { userId: string; orgId: string; lead
     return null;
   });
 
-  const payload = await buildLeadPayload(lr.contactId, saleUser?.fullName ?? null, args.userId, autoLookup);
+  const greetingTemplates = Array.isArray(config.greetingTemplates) ? (config.greetingTemplates as string[]) : [];
+  const payload = await buildLeadPayload(lr.contactId, saleUser?.fullName ?? null, args.userId, autoLookup, greetingTemplates);
   if (!payload) throw new LeadPoolError(404, 'contact_not_found', 'Contact không tồn tại');
 
   return {
