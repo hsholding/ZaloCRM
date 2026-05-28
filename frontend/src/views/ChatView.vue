@@ -148,6 +148,9 @@ const {
   registerSocketListeners,
 } = useChatOperations();
 
+// ════════ Auth (cần để compute isOwnedByMe fallback cho accountList) ════════
+const authStore = useAuthStore();
+
 // ════════ Zalo accounts (for FilterRail nick picker) ════════
 const { accounts: zaloAccounts, fetchAccounts: fetchZaloAccounts } = useZaloAccounts();
 const selectedAccountIds = ref<string[]>([]);
@@ -161,12 +164,15 @@ const accountList = computed(() =>
     displayName: a.displayName,
     avatarUrl: a.avatarUrl ?? null,
     ownerUserId: a.ownerUserId,
+    privacyMode: (a as any).privacyMode ?? 'sub',
+    isOwnedByMe: (a as any).isOwnedByMe ?? (a.ownerUserId === authStore.user?.id),
+    owner: (a as any).owner ?? null,
+    zaloUid: (a as any).zaloUid ?? null,
   })),
 );
 
 // ════════ Phase 6+ Inbox Triage Filters ════════
 const inboxFilters = useInboxFilters();
-const authStore = useAuthStore();
 const workspaceName = computed(() => authStore.user?.fullName?.split(' ')[0] || 'CRM');
 const currentUserName = computed(() => authStore.user?.fullName || 'Tôi');
 const currentUserId = computed(() => authStore.user?.id || '');
@@ -503,4 +509,5 @@ watch(searchQuery, () => {
   .smax-chat-grid > :first-child,
   .smax-chat-grid > :nth-child(4) { display: none; }
 }
+
 </style>

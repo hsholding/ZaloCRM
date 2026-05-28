@@ -30,6 +30,7 @@ export async function zaloRoutes(app: FastifyInstance): Promise<void> {
         status: true,
         ownerUserId: true,
         proxyUrl: true,
+        privacyMode: true,
         lastConnectedAt: true,
         createdAt: true,
         owner: { select: { id: true, fullName: true, email: true } },

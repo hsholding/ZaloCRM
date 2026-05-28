@@ -466,6 +466,130 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── POST /api/v1/contacts/quick-create — Wedge A KH-chặn-Zalo 2026-05-28 ──
+  // Sale add KH no-Zalo nhanh (chỉ Họ tên + SĐT) từ Contacts FAB hoặc Chat FAB.
+  // Behavior:
+  //  - Normalize phone (84xxx canonical) + reject nếu format không hợp lệ
+  //  - Dedup check theo phoneNormalized + phone variants
+  //  - Trùng → return {exists:true, contact:{...meta}} status 200 (FE hiện warning inline)
+  //  - Chưa → create Contact với hasZalo=null, source='quick_add', ContactAccess primary cho creator
+  app.post('/api/v1/contacts/quick-create', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const body = request.body as { fullName?: string; phone?: string; leadSource?: string };
+
+      const fullName = (body.fullName ?? '').trim();
+      const rawPhone = (body.phone ?? '').trim();
+      if (!fullName) return reply.status(400).send({ error: 'fullName required' });
+      if (!rawPhone) return reply.status(400).send({ error: 'phone required' });
+
+      const phoneNormalized = normalizePhone(rawPhone);
+      if (!phoneNormalized) {
+        return reply.status(400).send({ error: 'invalid_phone', message: 'SĐT không hợp lệ' });
+      }
+
+      // Dedup: search theo phoneNormalized exact + phone variants (legacy rows)
+      const phoneVariants = [
+        phoneNormalized,
+        '+' + phoneNormalized,
+        '0' + phoneNormalized.slice(2),
+      ];
+      const existing = await prisma.contact.findFirst({
+        where: {
+          orgId: user.orgId,
+          OR: [
+            { phoneNormalized },
+            { phone: { in: phoneVariants } },
+            { phone2: { in: phoneVariants } },
+            { phone3: { in: phoneVariants } },
+          ],
+        },
+        select: {
+          id: true, fullName: true, crmName: true, phone: true,
+          hasZalo: true, assignedUserId: true,
+          assignedUser: { select: { id: true, fullName: true } },
+        },
+      });
+
+      if (existing) {
+        return reply.status(200).send({
+          exists: true,
+          contact: {
+            id: existing.id,
+            fullName: existing.crmName || existing.fullName,
+            phone: existing.phone,
+            hasZalo: existing.hasZalo,
+            ownerUserId: existing.assignedUserId,
+            ownerName: existing.assignedUser?.fullName ?? null,
+          },
+        });
+      }
+
+      const leadSource = (body.leadSource ?? 'quick_add').trim() || 'quick_add';
+      const contact = await prisma.contact.create({
+        data: {
+          orgId: user.orgId,
+          fullName,
+          phone: rawPhone,
+          phoneNormalized,
+          source: leadSource,
+          status: 'new',
+          hasZalo: null, // chưa search Zalo
+          assignedUserId: user.id,
+          tags: [],
+          metadata: {},
+        },
+        select: {
+          id: true, fullName: true, crmName: true, phone: true,
+          hasZalo: true, source: true, assignedUserId: true, createdAt: true,
+        },
+      });
+
+      // ContactAccess primary cho sale tạo
+      await prisma.contactAccess.upsert({
+        where: { contactId_userId: { contactId: contact.id, userId: user.id } },
+        update: { role: 'primary' },
+        create: {
+          orgId: user.orgId,
+          contactId: contact.id,
+          userId: user.id,
+          role: 'primary',
+          source: 'quick_add',
+        },
+      });
+
+      // Fire automation trigger (best-effort, không throw)
+      void (async () => {
+        try {
+          const org = await prisma.organization.findUnique({
+            where: { id: user.orgId },
+            select: { id: true, name: true },
+          });
+          await runAutomationRules({
+            trigger: 'contact_created',
+            orgId: user.orgId,
+            org,
+            contact: {
+              id: contact.id,
+              fullName: contact.fullName,
+              phone: contact.phone,
+              status: 'new',
+              source: contact.source,
+              assignedUserId: contact.assignedUserId,
+            },
+          });
+        } catch {
+          // silent
+        }
+      })();
+
+      return reply.status(201).send({ exists: false, contact });
+    } catch (err) {
+      logger.error('[contacts] quick-create error:', err);
+      return reply.status(500).send({ error: 'Failed to create contact' });
+    }
+  });
+
   // ── PUT /api/v1/contacts/:id — update CRM fields ─────────────────────────
   app.put('/api/v1/contacts/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

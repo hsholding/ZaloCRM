@@ -575,6 +575,23 @@
       </div>
     </div>
     <DuplicateReviewDialog v-model="showDuplicateDialog" @merged="onDuplicateMerged" />
+
+    <!-- FAB: Thêm KH nhanh (Wedge A 2026-05-28) -->
+    <button
+      type="button"
+      class="add-customer-fab"
+      title="Thêm khách hàng nhanh"
+      aria-label="Thêm khách hàng nhanh"
+      @click="showAddCustomerDialog = true"
+    >
+      <span class="fab-plus">+</span>
+      <span class="fab-label">Thêm KH</span>
+    </button>
+    <AddCustomerQuickDialog
+      v-model="showAddCustomerDialog"
+      lead-source="contacts_fab"
+      @created="onContactQuickCreated"
+    />
   </div>
 </template>
 
@@ -585,6 +602,7 @@ import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
 import ContactDetailPanel from '@/components/contacts/ContactDetailPanel.vue';
 import ParentCandidateDialog from '@/components/contacts/ParentCandidateDialog.vue';
 import DuplicateReviewDialog from '@/components/contacts/DuplicateReviewDialog.vue';
+import AddCustomerQuickDialog from '@/components/contacts/AddCustomerQuickDialog.vue';
 import type { CareStatusValue } from '@/constants/care-status';
 import Avatar from '@/components/ui/Avatar.vue';
 import { useToast } from '@/composables/use-toast';
@@ -661,6 +679,12 @@ function toggleChildColumn(key: ChildColKey) {
 const showDialog = ref(false);
 const showDuplicateDialog = ref(false);
 const showCandidateDialog = ref(false);
+const showAddCustomerDialog = ref(false);
+
+function onContactQuickCreated(_c: { id: string; fullName: string | null; phone: string | null }) {
+  // Reload list ngay để KH mới xuất hiện đầu danh sách
+  fetchContacts();
+}
 
 // Phase Dual View 2026-05-28: viewMode persist localStorage
 const LS_KEY_VIEW = 'contactsview.viewMode.v1';
@@ -1979,5 +2003,51 @@ onMounted(() => {
 @media (min-width: 2560px) {
   .dual-pane.detail-open { grid-template-columns: 720px 1fr; }
   .smax-contacts-page { max-width: 2400px; margin: 0 auto; }
+}
+
+/* Wedge A 2026-05-28: FAB "Thêm KH nhanh" — floating bottom-right */
+.add-customer-fab {
+  position: fixed;
+  right: 32px;
+  bottom: 32px;
+  z-index: 90;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 20px 0 16px;
+  border-radius: 9999px;
+  border: 1px solid #181d26;
+  background: #181d26;
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22), 0 4px 8px rgba(15, 23, 42, 0.10);
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.add-customer-fab:hover {
+  background: #0d1218;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.28), 0 6px 12px rgba(15, 23, 42, 0.12);
+}
+.add-customer-fab:active { transform: translateY(1px); }
+.add-customer-fab .fab-plus {
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 400;
+}
+.add-customer-fab .fab-label {
+  font-size: 13.5px;
+  letter-spacing: 0.01em;
+}
+@media (min-width: 1920px) {
+  .add-customer-fab { right: 40px; bottom: 40px; height: 52px; padding: 0 22px 0 18px; }
+  .add-customer-fab .fab-plus { font-size: 24px; }
+  .add-customer-fab .fab-label { font-size: 14px; }
+}
+@media (min-width: 2560px) {
+  .add-customer-fab { right: 56px; bottom: 56px; height: 56px; padding: 0 26px 0 20px; }
+  .add-customer-fab .fab-label { font-size: 15px; }
 }
 </style>

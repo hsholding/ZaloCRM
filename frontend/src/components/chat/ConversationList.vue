@@ -6,15 +6,35 @@
         <input
           class="cl-search"
           name="conv-list-search"
+          ref="searchInputEl"
           autocomplete="off"
           :value="search"
+          :class="{ 'cl-search--flash': searchFlash }"
           placeholder="Tìm theo tên, SĐT, nội dung tin nhắn…"
           @input="onSearchInput"
+          @animationend="searchFlash = false"
         />
-        <button class="cl-new-msg" title="Bắt đầu cuộc trò chuyện mới" @click="newMsgOpen = true">
+        <button
+          class="cl-new-msg"
+          ref="newMsgBtnEl"
+          data-nick-picker-trigger
+          title="Bắt đầu cuộc trò chuyện mới"
+          @click="onClickNewMessage"
+        >
           <v-icon size="18">mdi-message-plus</v-icon>
           <span>Tin nhắn mới</span>
+          <span v-if="newMsgPickerOpen" class="cl-new-msg-caret">▴</span>
         </button>
+
+        <!-- Wedge A 2026-05-28: NickPickerPopup xổ từ nút Tin nhắn mới
+             Chỉ mở khi search có SĐT (>= 9 digits) -->
+        <NickPickerPopup
+          v-model="newMsgPickerOpen"
+          :accounts="composeAccounts as any"
+          :trigger-el="newMsgBtnEl"
+          title="📤 Chọn nick gửi tin nhắn"
+          @pick="onPickNickForNewMsg"
+        />
       </div>
 
       <!-- Label chip bar (filter theo tag CRM) — SINGLE-SELECT.
@@ -198,11 +218,12 @@
       </v-list>
     </v-menu>
 
-    <!-- Compose new message dialog -->
+    <!-- Compose new message dialog — chỉ mở SAU khi chọn nick từ NickPickerPopup -->
     <NewMessageDialog
       v-model="newMsgOpen"
       :accounts="composeAccounts"
       :default-account-id="composeDefaultAccountId"
+      :initial-query="newMsgInitialQuery"
       @opened="onComposeOpened"
     />
 
@@ -234,6 +255,7 @@ import { api } from '@/api/index';
 import AiSentimentBadge from '@/components/ai/ai-sentiment-badge.vue';
 import Avatar from '@/components/ui/Avatar.vue';
 import NewMessageDialog from '@/components/chat/NewMessageDialog.vue';
+import NickPickerPopup from '@/components/zalo-accounts/NickPickerPopup.vue';
 import ZaloBrandIcon from '@/components/icons/ZaloBrandIcon.vue';
 import { loadTagDefs, isZaloManaged, cleanTagName, tagColor } from '@/composables/use-crm-tag-defs';
 import { getOrgParts } from '@/composables/use-org-timezone';
@@ -247,7 +269,16 @@ const props = defineProps<{
   selectedId: string | null;
   loading: boolean;
   search: string;
-  accounts?: { id: string; displayName: string | null }[];
+  accounts?: Array<{
+    id: string;
+    displayName: string | null;
+    avatarUrl?: string | null;
+    ownerUserId?: string | null;
+    privacyMode?: string | null;
+    isOwnedByMe?: boolean;
+    owner?: { id: string; fullName: string | null } | null;
+    zaloUid?: string | null;
+  }>;
   selectedAccountIds?: string[];
   /** Phase A perf (2026-05-21) — tab key (personal/group/main/other). Dùng làm
    *  :key cho TransitionGroup → tab switch tạo instance MỚI → bỏ qua FLIP
@@ -267,16 +298,56 @@ const emit = defineEmits<{
 }>();
 
 // ── Compose new message ─────────────────────────────────────────────────────
+// Wedge A 2026-05-28 (anh chốt): nút "Tin nhắn mới" hành xử theo 2 state.
+//  - Search empty → flash đỏ cam viền search + focus, KHÔNG mở dialog.
+//  - Search có nội dung → mở NickPickerPopup xổ từ nút này (Teleport + anchored).
+//  - Pick nick từ popup → đóng popup + mở NewMessageDialog với
+//    defaultAccountId + initialQuery=search box.
 const newMsgOpen = ref(false);
+const newMsgPickerOpen = ref(false);
+const newMsgBtnEl = ref<HTMLElement | null>(null);
+const searchInputEl = ref<HTMLInputElement | null>(null);
+const searchFlash = ref(false);
+const newMsgInitialQuery = ref('');
+const newMsgPickedAccountId = ref<string | null>(null);
+
 const composeAccounts = computed(() => props.accounts || []);
 const composeDefaultAccountId = computed<string | null>(() => {
+  // Sau khi chọn nick từ popup → ưu tiên dùng cái đó
+  if (newMsgPickedAccountId.value) return newMsgPickedAccountId.value;
   const ids = props.selectedAccountIds || [];
   if (ids.length === 1) return ids[0];
   if (composeAccounts.value.length === 1) return composeAccounts.value[0].id;
   return null;
 });
+
+function onClickNewMessage() {
+  const q = (props.search || '').trim();
+  if (!q) {
+    // State A: hint sale nhập SĐT vào search trước
+    searchFlash.value = true;
+    nextTick(() => searchInputEl.value?.focus());
+    return;
+  }
+  // State B: mở NickPickerPopup xổ từ button "Tin nhắn mới"
+  newMsgPickerOpen.value = !newMsgPickerOpen.value;
+}
+
+function onPickNickForNewMsg(nick: { id: string }) {
+  newMsgPickedAccountId.value = nick.id;
+  newMsgInitialQuery.value = (props.search || '').trim();
+  newMsgPickerOpen.value = false;
+  newMsgOpen.value = true;
+}
+
 function onComposeOpened(conversationId: string) {
   emit('compose-opened', conversationId);
+  // Reset picked state sau khi dialog đã open + emit (dùng cho lần next)
+  newMsgPickedAccountId.value = null;
+  // Wedge A 2026-05-28 anh chốt: clear search SĐT sau khi mở chat thành công.
+  // Trước fix: sale gõ SĐT vào search → chọn nick → mở chat → conv mở nhưng
+  // conv list vẫn filter SĐT → conv mới biến mất → phải xoá search thủ công.
+  emit('update:search', '');
 }
 
 // ── Tab state ──────────────────────────────────────────────────────────────
@@ -803,6 +874,7 @@ function onPatternLeave() {
 }
 .cl-search-row {
   display: flex; gap: 6px; align-items: center;
+  position: relative; /* anchor cho NickPickerPopup */
 }
 .cl-search {
   flex: 1; min-width: 0;
@@ -815,6 +887,23 @@ function onPatternLeave() {
   font-family: inherit;
 }
 .cl-search:focus { border-color: var(--smax-primary); }
+
+/* Wedge A 2026-05-28: flash đỏ cam khi sale click "Tin nhắn mới" mà search trống */
+.cl-search--flash {
+  animation: cl-search-flash 1.1s ease-in-out 1;
+}
+@keyframes cl-search-flash {
+  0%   { border-color: #d97706; box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.55); background-color: #fffaf0; }
+  35%  { border-color: #ea580c; box-shadow: 0 0 0 6px rgba(217, 119, 6, 0.18); background-color: #fff5e6; }
+  70%  { border-color: #d97706; box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.0); background-color: #fffaf0; }
+  100% { border-color: var(--smax-grey-200); box-shadow: none; background-color: var(--smax-bg); }
+}
+
+.cl-new-msg-caret {
+  font-size: 11px;
+  margin-left: 2px;
+  line-height: 1;
+}
 .cl-new-msg {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 8px 10px;
