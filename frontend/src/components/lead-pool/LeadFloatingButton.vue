@@ -5,7 +5,7 @@
 -->
 <template>
   <Teleport to="body">
-    <div v-if="state.enabled" class="lfb-wrap" @mouseenter="onHover" @mouseleave="onLeave">
+    <div v-if="state.enabled && isChatRoute" class="lfb-wrap" @mouseenter="onHover" @mouseleave="onLeave">
 
       <!-- Rich tooltip -->
       <div v-if="showTooltip" class="lfb-tooltip-rich" @mouseenter="cancelHide" @mouseleave="onLeave">
@@ -187,6 +187,9 @@ let hideTimer: number | null = null;
 // Live tick mỗi giây cho countdown thu hồi pending lead
 const nowTick = ref(Date.now());
 let tickInterval: number | null = null;
+
+// 2026-05-28: FAB chỉ hiện ở UI chat (anh chốt — các trang khác ẩn để không vướng)
+const isChatRoute = computed(() => route.path.startsWith('/chat'));
 
 const state = computed(() => {
   const e = eligibility.value;
