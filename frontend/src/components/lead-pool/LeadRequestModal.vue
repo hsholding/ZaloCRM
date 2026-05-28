@@ -40,9 +40,10 @@
             <div class="lrm-name">{{ displayName }}</div>
             <div class="lrm-meta-inline">
               <span v-if="lead.contact.phone" class="lrm-phone">📱 {{ formatPhone(lead.contact.phone) }}</span>
-              <!-- Per-nick semantic 2026-05-28: tag theo góc nhìn sale current -->
-              <span v-if="lead.hasZaloFromMyNick" class="lrm-tag lrm-tag-green" :title="'Đã có UID qua nick ' + (lead.autoLookup?.nickUsed || 'của bạn')">🟢 Sẵn sàng chat</span>
-              <span v-else-if="lead.contact.hasZalo === true" class="lrm-tag lrm-tag-red lrm-tag-shake" title="KH có Zalo nhưng từ nick sale khác — bấm nút 'Tìm Zalo qua SĐT' để chat được">🔴 Tìm Zalo qua SĐT</span>
+              <!-- Per-nick semantic 2026-05-28: tag hiển thị nick đang sẵn sàng dùng -->
+              <span v-if="lead.hasZaloFromMyNick && (lead.autoLookup?.nickUsed || directChatNickName)" class="lrm-tag lrm-tag-green" :title="'Bấm Mở chat Zalo → vào chat ngay qua nick này. Có thể đổi nick khác trong popup.'">🟢 Sẵn sàng chat qua "{{ lead.autoLookup?.nickUsed || directChatNickName }}"</span>
+              <span v-else-if="lead.hasZaloFromMyNick" class="lrm-tag lrm-tag-green">🟢 Sẵn sàng chat</span>
+              <span v-else-if="lead.contact.hasZalo === true" class="lrm-tag lrm-tag-red lrm-tag-shake" title="KH có Zalo nhưng từ nick sale khác — bấm 'Mở chat Zalo' để chọn nick của bạn">🔴 Chọn nick để tìm Zalo</span>
               <span v-else-if="lead.contact.hasZalo === false" class="lrm-tag lrm-tag-grey">⚪ Chưa có Zalo</span>
               <span v-else class="lrm-tag lrm-tag-grey">❔ Chưa rõ Zalo</span>
             </div>
@@ -143,44 +144,29 @@
         <!-- 4 action buttons compact grid 4 cột -->
         <div class="lrm-actions-wrap">
           <div class="lrm-actions-title">⚡ Bắt đầu liên lạc</div>
-          <div class="lrm-actions-grid">
-            <!-- Nút 1: Tìm Zalo qua SĐT -->
-            <button
-              class="lrm-action lrm-action-find"
-              :class="{ active: activePopup === 'find', disabled: lead.hasZaloFromMyNick }"
-              :disabled="lead.hasZaloFromMyNick || lookupZaloDead"
-              @click="togglePopup('find')"
-            >
-              <span class="lrm-action-icon">🔍</span>
-              <span class="lrm-action-text">
-                <span class="lrm-action-title">{{ lead.hasZaloFromMyNick ? '✅ Đã có Zalo (nick bạn)' : 'Tìm Zalo qua SĐT' }}</span>
-                <span class="lrm-action-sub">{{ lead.hasZaloFromMyNick ? 'Không cần tìm' : (lookupZaloDead ? '❌ Không tìm ra' : 'Chọn nick lookup') }}</span>
-              </span>
-            </button>
-
-            <!-- Nút 2: Mở chat Zalo -->
+          <div class="lrm-actions-grid lrm-actions-grid-3">
+            <!-- Nút 1: Mở chat Zalo -->
             <button
               class="lrm-action lrm-action-zalo"
               :class="{ active: activePopup === 'chat' }"
-              :disabled="lookupZaloDead"
               @click="togglePopup('chat')"
             >
               <span class="lrm-action-icon">💬</span>
               <span class="lrm-action-text">
-                <span class="lrm-action-title">{{ directChatNickName ? 'Mở chat Zalo →' : 'Mở chat Zalo' }}</span>
-                <span class="lrm-action-sub">{{ lookupZaloDead ? '❌ Không tìm ra' : (directChatNickName ? `Vào chat qua "${directChatNickName}"` : 'Chọn nick để mở') }}</span>
+                <span class="lrm-action-title">Mở chat Zalo</span>
+                <span class="lrm-action-sub">{{ directChatNickName ? `Sẵn sàng qua "${directChatNickName}"` : 'Chọn nick để mở' }}</span>
               </span>
             </button>
 
+            <!-- Nút 2: Gọi điện -->
             <a
               v-if="lead.contact.phone"
               :href="`tel:${lead.contact.phone}`"
               class="lrm-action lrm-action-call"
-              :class="{ pulse: shouldPulseCall }"
             >
               <span class="lrm-action-icon">📞</span>
               <span class="lrm-action-text">
-                <span class="lrm-action-title">{{ shouldPulseCall ? '📞 Gọi ngay!' : 'Gọi điện' }}</span>
+                <span class="lrm-action-title">Gọi điện</span>
                 <span class="lrm-action-sub">{{ formatPhone(lead.contact.phone) }}</span>
               </span>
             </a>
@@ -210,7 +196,7 @@
           >
             <div class="lrm-nick-popup-header">
               <span class="lrm-nick-popup-title">
-                🔍 {{ activePopup === 'chat' ? 'Mở chat bằng nick nào?' : 'Tìm Zalo bằng nick nào?' }}
+                💬 Mở chat bằng nick nào?
               </span>
               <input
                 v-if="totalNickCount > 5"
@@ -226,12 +212,34 @@
               ⚠ Không có nick Zalo nào online. Vào "Quản lý nick" kết nối nick trước.
             </div>
 
-            <!-- "Gần đây" — chỉ hiện khi không search + có recent -->
-            <div v-if="!nickSearch && recentNicks.length > 0" class="lrm-nick-section">
+            <!-- ★ Nick đang dùng (auto-lookup) — xếp đầu, default highlight -->
+            <div v-if="!nickSearch && currentNick" class="lrm-nick-section">
+              <span class="lrm-nick-row-label">★ Đang dùng (bấm = vào chat ngay)</span>
+              <div class="lrm-nick-row">
+                <button
+                  class="lrm-nick-pill current"
+                  :class="{ busy: pendingNickId === currentNick.id }"
+                  :disabled="pendingNickId !== null"
+                  @click="onPickNick(currentNick.id)"
+                  :title="currentNick.ownerName ? 'Nick của ' + currentNick.ownerName : ''"
+                >
+                  <span class="lrm-nick-pill-avatar" :style="nickAvatarStyle(currentNick.displayName || '?')">
+                    <img v-if="currentNick.avatarUrl" :src="currentNick.avatarUrl" :alt="currentNick.displayName || ''" referrerpolicy="no-referrer" />
+                    <span v-else>{{ nickInitials(currentNick.displayName) }}</span>
+                  </span>
+                  <span class="lrm-nick-pill-name">{{ currentNick.displayName || '(không tên)' }}</span>
+                  <span class="lrm-nick-pill-star">★</span>
+                </button>
+                <span class="lrm-nick-hint">Chọn nick khác bên dưới → hệ thống sẽ tự quét UID Zalo của KH bằng nick đó rồi mở chat</span>
+              </div>
+            </div>
+
+            <!-- "Gần đây" — chỉ hiện khi không search + có recent (loại trừ currentNick) -->
+            <div v-if="!nickSearch && recentNicksFiltered.length > 0" class="lrm-nick-section">
               <span class="lrm-nick-row-label">🕒 Gần đây dùng</span>
               <div class="lrm-nick-row">
                 <button
-                  v-for="n in recentNicks"
+                  v-for="n in recentNicksFiltered"
                   :key="'recent-' + n.id"
                   class="lrm-nick-pill priority"
                   :class="{ busy: pendingNickId === n.id }"
@@ -363,8 +371,6 @@ const actionError = ref('');
 const actionInfo = ref('');
 const enrichSuccess = ref<{ nickUsed: string; zaloName: string | null } | null>(null);
 const copiedFlag = ref(false);
-const lookupZaloDead = ref(false);
-const shouldPulseCall = ref(false);
 const avatarBroken = ref(false);
 const zaloProfile = ref<{
   uid?: string; zaloName?: string | null; username?: string | null;
@@ -427,6 +433,22 @@ const recentNicks = computed(() => {
     .map((id) => all.find((n) => n.id === id))
     .filter((n): n is any => n != null)
     .slice(0, RECENT_NICKS_MAX);
+});
+
+// 2026-05-28: nick auto-lookup BE chọn khi nhận lead — xếp đầu popup với ★
+const currentNick = computed(() => {
+  if (!nicksData.value) return null;
+  const nickId = (props.lead as any)?.autoLookup?.nickId;
+  if (!nickId) return null;
+  const all = [...nicksData.value.ownNicks, ...nicksData.value.teamNicks];
+  return all.find((n) => n.id === nickId) ?? null;
+});
+
+// Loại currentNick khỏi list "Gần đây dùng" để tránh trùng
+const recentNicksFiltered = computed(() => {
+  const curId = currentNick.value?.id;
+  if (!curId) return recentNicks.value;
+  return recentNicks.value.filter((n) => n.id !== curId);
 });
 
 const noteMinLength = computed(() => eligibility.value?.config.noteMinLength ?? 20);
@@ -574,20 +596,13 @@ async function fetchNicksIfNeeded() {
   }
 }
 
-function togglePopup(kind: 'chat' | 'find') {
-  // 2026-05-28: bấm "Mở chat Zalo" khi đã có nick (autoLookup.nickId hoặc Friend per-nick
-  // của sale current) → mở thẳng chat, KHÔNG hiện popup chọn nick. Anh chốt: đã biết nick
-  // nào dùng được rồi thì chọn nick khác cũng vô nghĩa.
-  if (kind === 'chat' && props.lead) {
-    const directNickId = resolveDirectChatNickId();
-    if (directNickId) {
-      void openChatDirect(directNickId);
-      return;
-    }
-  }
+function togglePopup(kind: 'chat') {
+  // 2026-05-28 anh chốt: LUÔN show popup khi bấm Mở chat Zalo. Nick auto-lookup được
+  // gắn ★ "Đang dùng" + xếp đầu để sale thấy ngay default. Sale có quyền chọn nick
+  // khác → BE tự lookup UID qua nick mới → upsert Friend + Conversation → paste câu
+  // chào vào chat đúng nick mới.
   if (activePopup.value === kind) { activePopup.value = null; return; }
-  // Sau reorder 2026-05-27: find = button 1 (left=0), chat = button 2 (left=220)
-  popupLeft.value = kind === 'find' ? 0 : 220;
+  popupLeft.value = 0; // chỉ còn 1 nút có popup → align left mặc định
   activePopup.value = kind;
   nickSearch.value = '';
   expandedOwn.value = false;
@@ -623,12 +638,21 @@ const directChatNickName = computed<string | null>(() => {
   return null;
 });
 
-async function openChatDirect(zaloAccountId: string) {
-  if (!props.lead) return;
+function clearMessages() {
+  actionError.value = '';
+  actionInfo.value = '';
+  enrichSuccess.value = null;
+}
+
+async function onPickNick(zaloAccountId: string) {
+  if (!activePopup.value || !props.lead) return;
   pendingNickId.value = zaloAccountId;
   clearMessages();
+  // Track recent pick — lên top "Gần đây" lần sau
   pushRecentNick(zaloAccountId);
   try {
+    // BE openChatForLead Path A: nếu chưa có Friend với nick này → tự lookup UID qua
+    // nick mới → upsert Friend + Conversation stub. Sale chỉ cần chọn nick là xong.
     const { data } = await api.post(`/lead-pool/${props.lead.leadRequestId}/open-chat`, { zaloAccountId });
     if (data?.canChat && data.conversationId) {
       const draft = primarySuggestion.value;
@@ -644,83 +668,10 @@ async function openChatDirect(zaloAccountId: string) {
         emit('close');
       }, 700);
     } else if (data?.reason === 'no_zalo') {
-      lookupZaloDead.value = true;
-      shouldPulseCall.value = true;
-      actionError.value = data.message || 'KH không bật tìm kiếm/kết bạn Zalo qua SĐT. Hãy thử bằng Sale Phone nhé!';
+      actionError.value = data.message || 'Nick này không tìm thấy Zalo của KH. Thử nick khác hoặc gọi điện.';
+      activePopup.value = null;
     } else {
       actionError.value = data?.message || 'Không mở được chat';
-    }
-  } catch (err: any) {
-    actionError.value = err?.response?.data?.error || 'Mở chat thất bại';
-  } finally {
-    pendingNickId.value = null;
-  }
-}
-
-function clearMessages() {
-  actionError.value = '';
-  actionInfo.value = '';
-  enrichSuccess.value = null;
-}
-
-async function onPickNick(zaloAccountId: string) {
-  const kind = activePopup.value;
-  if (!kind || !props.lead) return;
-  pendingNickId.value = zaloAccountId;
-  clearMessages();
-  // Track recent pick — lên top "Gần đây" lần sau
-  pushRecentNick(zaloAccountId);
-  try {
-    if (kind === 'chat') {
-      const { data } = await api.post(`/lead-pool/${props.lead.leadRequestId}/open-chat`, { zaloAccountId });
-      if (data?.canChat && data.conversationId) {
-        // Auto-paste câu gợi ý vào input chat
-        const draft = primarySuggestion.value;
-        router.push({
-          path: `/chat/${data.conversationId}`,
-          query: draft ? { draft: draft.slice(0, 600) } : undefined,
-        });
-        emit('close');
-      } else if (data?.canChat) {
-        actionInfo.value = `Tìm thấy KH qua nick "${data.nickDisplayName}". Mở trang KH...`;
-        setTimeout(() => {
-          if (props.lead?.contact.id) router.push(`/contacts/${props.lead.contact.id}/activity`);
-          emit('close');
-        }, 700);
-      } else if (data?.reason === 'no_zalo') {
-        lookupZaloDead.value = true;
-        shouldPulseCall.value = true;
-        actionError.value = data.message || 'KH không bật tìm kiếm/kết bạn Zalo qua SĐT. Hãy thử bằng Sale Phone nhé!';
-        activePopup.value = null;
-      } else {
-        actionError.value = data?.message || 'Không mở được chat';
-      }
-    } else {
-      const { data } = await api.post(`/lead-pool/${props.lead.leadRequestId}/find-zalo`, { zaloAccountId });
-      if (data?.found) {
-        enrichSuccess.value = { nickUsed: data.nickUsed, zaloName: data.zaloName };
-        if (props.lead.contact) {
-          (props.lead.contact as any).hasZalo = true;
-          if (data.avatar) {
-            (props.lead.contact as any).avatarUrl = data.avatar;
-            avatarBroken.value = false;
-          }
-        }
-        // 2026-05-28: BE đã upsert Friend per-nick → tag chuyển sang "Sẵn sàng chat"
-        (props.lead as any).hasZaloFromMyNick = true;
-        (props.lead as any).autoLookup = {
-          found: true, uid: data.uid, nickUsed: data.nickUsed,
-          zaloProfile: data.zaloProfile ?? null,
-        };
-        if (data.zaloProfile) zaloProfile.value = data.zaloProfile;
-        activePopup.value = null;
-      } else {
-        lookupZaloDead.value = true;
-        shouldPulseCall.value = true;
-        actionError.value = 'KH không bật tìm kiếm/kết bạn Zalo qua SĐT. Hãy thử bằng Sale Phone nhé!';
-        activePopup.value = null;
-      }
-      if (data?.duplicateWarning) actionInfo.value = data.duplicateWarning;
     }
   } catch (err: any) {
     actionError.value = err?.response?.data?.error || 'Thao tác thất bại';
@@ -755,7 +706,7 @@ async function onReturn() {
 function onDocumentClick(e: MouseEvent) {
   if (!activePopup.value) return;
   const target = e.target as HTMLElement;
-  if (target.closest('.lrm-nick-popup') || target.closest('.lrm-action-zalo') || target.closest('.lrm-action-find')) return;
+  if (target.closest('.lrm-nick-popup') || target.closest('.lrm-action-zalo')) return;
   activePopup.value = null;
 }
 
@@ -878,9 +829,7 @@ onBeforeUnmount(() => { document.removeEventListener('click', onDocumentClick); 
 .lrm-action-zalo { border-color: #86EFAC; background: #F0FDF4; }
 .lrm-action-zalo:hover:not(:disabled) { border-color: #10B981; }
 .lrm-action-zalo.active { border-color: #10B981; background: #D1FAE5; }
-.lrm-action-find { border-color: #FCD34D; background: #FFFBEB; }
-.lrm-action-find:hover:not(:disabled):not(.disabled) { border-color: #F59E0B; }
-.lrm-action-find.active { border-color: #F59E0B; background: #FEF3C7; }
+.lrm-actions-grid-3 { grid-template-columns: repeat(3, 1fr); }
 .lrm-action-call { border-color: #93C5FD; background: #EFF6FF; }
 .lrm-action-call:hover { border-color: #3B82F6; }
 .lrm-action-detail { border-color: #DDD6FE; background: #FAF5FF; }
@@ -915,7 +864,20 @@ onBeforeUnmount(() => { document.removeEventListener('click', onDocumentClick); 
 .lrm-nick-pill:hover:not(:disabled) { background: #EEF0FF; border-color: #5E6AD2; transform: translateY(-1px); box-shadow: 0 3px 8px rgba(94, 106, 210, 0.18); }
 .lrm-nick-pill:disabled { opacity: 0.6; cursor: wait; }
 .lrm-nick-pill.priority { border-color: #5E6AD2; background: #EEF0FF; }
+.lrm-nick-pill.current {
+  border-color: #10B981; background: #ECFDF5;
+  border-width: 2px; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+}
+.lrm-nick-pill.current:hover:not(:disabled) { background: #D1FAE5; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35); }
+.lrm-nick-pill-star { color: #F59E0B; font-size: 13px; margin-left: 2px; }
 .lrm-nick-pill.busy { background: #FEF3C7; border-color: #F59E0B; }
+.lrm-nick-hint {
+  display: block; margin-top: 6px;
+  font-size: 10.5px; color: #64748B;
+  font-style: italic; line-height: 1.4;
+  flex-basis: 100%;
+}
 .lrm-nick-pill-avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 10.5px; flex-shrink: 0; position: relative; overflow: hidden; }
 .lrm-nick-pill-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .lrm-nick-pill-avatar::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 8px; height: 8px; background: #10B981; border: 2px solid white; border-radius: 50%; }
