@@ -64,14 +64,30 @@
         @click="$emit('select', conv.id)"
         @contextmenu.prevent="openContextMenu($event, conv)"
       >
-        <Avatar
-          :src="avatarSrcOf(conv)"
-          :name="displayName(conv)"
-          :size="41"
-          :is-group="conv.threadType === 'group'"
-          :platform="conv.threadType === 'user' ? 'zalo' : null"
-          :gradient-seed="conv.id"
-        />
+        <div class="ci-avatar-wrap">
+          <Avatar
+            :src="avatarSrcOf(conv)"
+            :name="displayName(conv)"
+            :size="41"
+            :is-group="conv.threadType === 'group'"
+            :platform="conv.threadType === 'user' ? 'zalo' : null"
+            :gradient-seed="conv.id"
+          />
+          <!-- Mini nick avatar — góc dưới-trái cho biết conv thuộc nick Zalo nào.
+               Anh chốt 2026-05-28: tránh phải click vào conv mới biết nick. -->
+          <img
+            v-if="conv.zaloAccount?.avatarUrl"
+            :src="conv.zaloAccount.avatarUrl"
+            :alt="conv.zaloAccount.displayName || ''"
+            :title="conv.zaloAccount.displayName ? `Nick: ${conv.zaloAccount.displayName}` : 'Nick Zalo'"
+            class="ci-nick-mini"
+          />
+          <span
+            v-else-if="conv.zaloAccount?.displayName"
+            class="ci-nick-mini ci-nick-mini--initial"
+            :title="`Nick: ${conv.zaloAccount.displayName}`"
+          >{{ (conv.zaloAccount.displayName || '?').charAt(0).toUpperCase() }}</span>
+        </div>
 
 
         <div class="ci-body">
@@ -937,6 +953,36 @@ function onPatternLeave() {
 }
 /* Avatar dịch xuống nhẹ để canh giữa với name + preview (bỏ qua tag row) */
 .conv-item :deep(.smax-av) { margin-top: 2px; flex-shrink: 0; }
+
+/* Wrapper để position mini avatar nick Zalo overlay góc dưới-trái */
+.ci-avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.ci-nick-mini {
+  position: absolute;
+  bottom: -2px;
+  left: -2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--smax-grey-100, #f3f4f6);
+  object-fit: cover;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  z-index: 1;
+}
+.ci-nick-mini--initial {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #2962ff, #6366f1);
+}
+.conv-item.active .ci-nick-mini { border-color: var(--smax-primary-soft, #e3f2fd); }
 .conv-item:hover { background: var(--smax-grey-50); }
 .conv-item.unread .ci-name { font-weight: 700; }
 /* Active: nền xanh nhạt đồng nhất + bo góc + viền xanh nhẹ */

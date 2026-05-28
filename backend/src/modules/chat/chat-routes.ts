@@ -336,10 +336,12 @@ export async function chatRoutes(app: FastifyInstance) {
     // Sort mode — Phase 6+ "Chưa đọc lên trên" vs "Mới nhất lên trên"
     // unread-first: composite [unreadCount > 0 DESC, lastMessageAt DESC]
     // Recent (default): [lastMessageAt DESC]
+    // 2026-05-28: nulls: 'last' để conv chưa có message thật KHÔNG pin top
+    // (ensure-conversation từ Lead Pool / Friend click tạo conv với lastMessageAt=null).
     const orderByClause: any =
       sortMode === 'unread-first'
-        ? [{ unreadCount: 'desc' }, { lastMessageAt: 'desc' }]
-        : { lastMessageAt: 'desc' };
+        ? [{ unreadCount: 'desc' }, { lastMessageAt: { sort: 'desc', nulls: 'last' } }]
+        : { lastMessageAt: { sort: 'desc', nulls: 'last' } };
 
     const [conversations, total] = await Promise.all([
       prisma.conversation.findMany({

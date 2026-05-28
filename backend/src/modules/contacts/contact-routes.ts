@@ -1048,7 +1048,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           contactId: friend.contactId,
           threadType: 'user',
           externalThreadId: friend.zaloUidInNick,
-          lastMessageAt: new Date(),
+          // 2026-05-28: NULL cho conv vừa tạo từ ensure-conversation (Lead Pool /
+          // Friend click "Bắt đầu chat") — KHÔNG set new Date() vì conv chưa có
+          // message thật → bug pin-top vĩnh viễn nếu set timestamp.
+          lastMessageAt: null,
           unreadCount: 0,
           isReplied: false,
         },
@@ -1098,7 +1101,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           contactId: null,
           threadType: 'group',
           externalThreadId: groupId,
-          lastMessageAt: new Date(),
+          // 2026-05-28: NULL cho conv vừa tạo từ ensure-conversation (Lead Pool /
+          // Friend click "Bắt đầu chat") — KHÔNG set new Date() vì conv chưa có
+          // message thật → bug pin-top vĩnh viễn nếu set timestamp.
+          lastMessageAt: null,
           unreadCount: 0,
           isReplied: false,
         },
@@ -1335,7 +1341,10 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           contactId: linkedContactId,
           threadType: 'user',
           externalThreadId: body.uid,
-          lastMessageAt: new Date(),
+          // 2026-05-28: NULL cho conv vừa tạo từ ensure-conversation (Lead Pool /
+          // Friend click "Bắt đầu chat") — KHÔNG set new Date() vì conv chưa có
+          // message thật → bug pin-top vĩnh viễn nếu set timestamp.
+          lastMessageAt: null,
           unreadCount: 0,
           isReplied: false,
         },
