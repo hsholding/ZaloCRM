@@ -535,6 +535,9 @@
       v-if="showForwardDialog"
       v-model="showForwardDialog"
       :conversations="allConversations ?? []"
+      :source-zalo-account-id="conversation?.zaloAccount?.id ?? null"
+      :source-nick-label="conversation?.zaloAccount?.displayName ?? null"
+      :current-conversation-id="conversation?.id ?? null"
       @forward="onForward"
     />
 
