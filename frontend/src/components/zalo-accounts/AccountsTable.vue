@@ -602,68 +602,70 @@ tbody tr.alert:hover { background: #FFF5F5 }
 
 /* Phase metrics layer 2026-05-22 — cột "Hôm nay" mini-chips */
 .th-hint { font-weight: 400; color: #9CA3AF; font-size: 11px; margin-left: 4px; letter-spacing: 1px; }
-/* ═══════════ Phase Hôm nay redesign 2026-05-28 — mini 4-col table ═══════════ */
+/* ═══════════ Phase Hôm nay redesign 2026-05-28 — mini 4-col table (HD-first 1280×720) ═══════════ */
 .hn-mt {
   border: 1px solid #F3F4F6;
-  border-radius: 6px;
+  border-radius: 5px;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 1.3fr 0.95fr 0.95fr 0.8fr;
+  grid-template-columns: 1.2fr 0.95fr 0.95fr 0.7fr;
   font-variant-numeric: tabular-nums;
-  min-width: 240px;
-  max-width: 320px;
+  min-width: 188px;
+  max-width: 240px;
 }
 .hn-mt-head { display: contents; }
 .hn-mt-head .h {
   background: #F9FAFB;
-  padding: 4px 6px;
-  font-size: 9.5px;
+  padding: 3px 4px;
+  font-size: 9px;
   font-weight: 600;
   color: #6B7280;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-bottom: 1px solid #F3F4F6;
+  line-height: 1.2;
 }
-.hn-mt-head .h.label { justify-content: flex-start; padding-left: 8px; }
+.hn-mt-head .h.label { justify-content: flex-start; padding-left: 6px; }
 .hn-mt-head .h.total { background: rgba(41, 98, 255, 0.08); color: #2962FF; }
 
 .hn-mt-row { display: contents; cursor: help; }
 .hn-mt-row > div {
-  padding: 5px 6px;
+  padding: 3px 4px;
   border-bottom: 1px solid #F3F4F6;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  font-size: 11.5px;
+  gap: 3px;
+  font-size: 11px;
   font-weight: 600;
   color: #1F2937;
+  line-height: 1.2;
 }
 .hn-mt-row > div.label {
   background: #F9FAFB;
-  font-size: 10.5px;
+  font-size: 10px;
   color: #374151;
   font-weight: 500;
   justify-content: flex-start;
-  padding-left: 8px;
-  gap: 5px;
+  padding-left: 6px;
+  gap: 4px;
 }
-.hn-mt-row > div.label .em { font-size: 12px; }
+.hn-mt-row > div.label .em { font-size: 11px; }
 .hn-mt-row > div.total {
   background: rgba(41, 98, 255, 0.04);
   color: #2962FF;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 .hn-mt-row > div.user { color: #2962FF; background: rgba(41, 98, 255, 0.06); }
 .hn-mt-row > div.bot { color: #F59E0B; background: rgba(245, 158, 11, 0.08); }
 .hn-mt-row > div.friend { color: #047857; background: rgba(16, 185, 129, 0.06); }
 .hn-mt-row > div.stranger { color: #B45309; background: rgba(245, 158, 11, 0.06); }
 .hn-mt-row > div.zero { color: #D1D5DB; font-weight: 400; }
-.hn-mt-row > div .cell-icon { opacity: 0.75; font-size: 11px; line-height: 1; }
+.hn-mt-row > div .cell-icon { opacity: 0.75; font-size: 10px; line-height: 1; }
 .hn-mt-row:last-of-type > div { border-bottom: 0; }
 
 /* Group row (groupByDept=true) */
