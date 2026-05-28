@@ -41,8 +41,8 @@
             <div class="lrm-meta-inline">
               <span v-if="lead.contact.phone" class="lrm-phone">📱 {{ formatPhone(lead.contact.phone) }}</span>
               <!-- Per-nick semantic 2026-05-28: tag theo góc nhìn sale current -->
-              <span v-if="lead.hasZaloFromMyNick" class="lrm-tag lrm-tag-green" :title="'Đã có UID qua nick ' + (lead.autoLookup?.nickUsed || 'của bạn')">🟢 Có Zalo (nick bạn)</span>
-              <span v-else-if="lead.contact.hasZalo === true" class="lrm-tag lrm-tag-amber" title="KH có Zalo nhưng từ nick sale khác — cần lookup lại từ nick của bạn">🟡 Cần lookup nick mình</span>
+              <span v-if="lead.hasZaloFromMyNick" class="lrm-tag lrm-tag-green" :title="'Đã có UID qua nick ' + (lead.autoLookup?.nickUsed || 'của bạn')">🟢 Sẵn sàng chat</span>
+              <span v-else-if="lead.contact.hasZalo === true" class="lrm-tag lrm-tag-red lrm-tag-shake" title="KH có Zalo nhưng từ nick sale khác — bấm 'Tìm Zalo qua SĐT' để chat được">🔴 Cần lookup nick mình</span>
               <span v-else-if="lead.contact.hasZalo === false" class="lrm-tag lrm-tag-grey">⚪ Chưa có Zalo</span>
               <span v-else class="lrm-tag lrm-tag-grey">❔ Chưa rõ Zalo</span>
             </div>
@@ -634,6 +634,12 @@ async function onPickNick(zaloAccountId: string) {
             avatarBroken.value = false;
           }
         }
+        // 2026-05-28: BE đã upsert Friend per-nick → tag chuyển sang "Sẵn sàng chat"
+        (props.lead as any).hasZaloFromMyNick = true;
+        (props.lead as any).autoLookup = {
+          found: true, uid: data.uid, nickUsed: data.nickUsed,
+          zaloProfile: data.zaloProfile ?? null,
+        };
         if (data.zaloProfile) zaloProfile.value = data.zaloProfile;
         activePopup.value = null;
       } else {
@@ -723,6 +729,25 @@ onBeforeUnmount(() => { document.removeEventListener('click', onDocumentClick); 
 .lrm-tag-grey { background: #F1F5F9; color: #64748B; }
 .lrm-tag-green { background: #DCFCE7; color: #166534; }
 .lrm-tag-amber { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; }
+.lrm-tag-red {
+  background: #FEE2E2;
+  color: #B91C1C;
+  border: 1px solid #FCA5A5;
+  font-weight: 800;
+}
+.lrm-tag-shake {
+  animation: lrm-tag-shake 1.2s ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes lrm-tag-shake {
+  0%, 100% { transform: translateX(0) scale(1); }
+  10%      { transform: translateX(-1.5px) scale(1.02); }
+  20%      { transform: translateX(1.5px) scale(1.02); }
+  30%      { transform: translateX(-1px) scale(1.02); }
+  40%      { transform: translateX(1px) scale(1.02); }
+  50%      { transform: translateX(0) scale(1.05); }
+  60%, 100% { transform: translateX(0) scale(1); }
+}
 .lrm-meta-sub { font-size: 11.5px; color: #64748B; margin-top: 2px; display: flex; gap: 10px; flex-wrap: wrap; }
 
 .lrm-stats-chips { display: flex; gap: 6px; }
