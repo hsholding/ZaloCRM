@@ -124,7 +124,7 @@ async function generateText(provider: string, apiKey: string, model: string, sys
   throw new Error(`Unsupported AI provider: ${provider}`);
 }
 
-async function saveSuggestion(input: { orgId: string; conversationId: string; messageId?: string; type: AiTaskType; content: string; confidence: number }) {
+async function saveSuggestion(input: { orgId: string; conversationId: string | null; messageId?: string; type: AiTaskType; content: string; confidence: number }) {
   return prisma.aiSuggestion.create({
     data: {
       orgId: input.orgId,
@@ -547,10 +547,10 @@ export function aiGenerateSalesHandoffMessage(input: SalesHandoffInput): SalesHa
     `Anh/Chị review lại KH này để mình cùng chăm tìm phương án chuyển đổi nhé.`,
   ].join('').replace(/\s+/g, ' ').trim();
 
-  // Save vào aiSuggestion để track (best-effort)
+  // Save vào aiSuggestion để track (best-effort, nullable conversationId 2026-05-28)
   saveSuggestion({
     orgId: input.orgId,
-    conversationId: 'system',
+    conversationId: null,
     type: 'reply_draft',
     content: JSON.stringify({ kind: 'sales_handoff', content }),
     confidence: 1.0,
@@ -598,10 +598,10 @@ export async function aiFormatRichText(input: { orgId: string; rawText: string }
     // v4: phrase-based → BE tự indexOf → offsets chính xác 100%
     const styles = rangesToStyles(text, parsed?.ranges);
 
-    // Save vào aiSuggestion để track quota
+    // Save vào aiSuggestion để track quota (nullable conversationId 2026-05-28)
     await saveSuggestion({
       orgId: input.orgId,
-      conversationId: 'system',          // không gắn vào conv cụ thể
+      conversationId: null,               // format-rich không gắn vào conv cụ thể
       type: 'reply_draft',                // reuse type để tránh schema migration
       content: JSON.stringify({ kind: 'format_rich', styles }),
       confidence: 0.85,

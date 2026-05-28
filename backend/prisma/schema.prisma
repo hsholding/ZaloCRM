@@ -1108,7 +1108,9 @@ model AiConfig {
 model AiSuggestion {
   id             String   @id @default(uuid())
   orgId          String   @map("org_id")
-  conversationId String   @map("conversation_id")
+  // 2026-05-28: nullable cho AI tasks không gắn conv cụ thể (format-rich, sales-handoff,
+  // lead-pool suggestions). Trước fix: FK violated → catch swallow → quota counter sai.
+  conversationId String?  @map("conversation_id")
   messageId      String?  @map("message_id")
   type           String
   content        String
@@ -1116,8 +1118,8 @@ model AiSuggestion {
   accepted       Boolean  @default(false)
   createdAt      DateTime @default(now()) @map("created_at")
 
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([orgId, createdAt])
   @@index([conversationId, createdAt])
