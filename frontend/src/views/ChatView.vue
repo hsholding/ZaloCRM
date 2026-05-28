@@ -66,7 +66,6 @@
       @undo-message="onUndoMessage"
       @edit-message="onEditMessage"
       @forward-message="onForwardMessage"
-      @pin-conversation="onPinConversation"
       @set-reply-to="setReplyTo"
       @set-editing="setEditing"
       @cancel-reply-edit="onCancelReplyEdit"
@@ -144,10 +143,9 @@ const {
 const {
   typingUsers, replyingTo, editingMessage,
   addReaction, removeReaction, sendTypingEvent, deleteMessage, undoMessage,
-  editMessage, forwardMessage, pinConversation,
+  editMessage, forwardMessage,
   setReplyTo, clearReplyTo, setEditing, clearEditing,
   registerSocketListeners,
-  unpinConversation,
 } = useChatOperations();
 
 // ════════ Zalo accounts (for FilterRail nick picker) ════════
@@ -306,16 +304,6 @@ async function onForwardMessage(msgId: string, targetIds: string[]) {
   } catch (err: any) {
     toast.error(err?.response?.data?.error || 'Không chuyển tiếp được');
   }
-}
-async function onPinConversation() {
-  if (!selectedConvId.value || !selectedConv.value) return;
-  if (selectedConv.value.isPinned) {
-    await unpinConversation(selectedConvId.value);
-  } else {
-    await pinConversation(selectedConvId.value);
-  }
-  // bypassCache: pin state đã đổi server-side → cache cũ sẽ làm conv flicker
-  await fetchConversations({ bypassCache: true });
 }
 function onCancelReplyEdit() {
   clearReplyTo();

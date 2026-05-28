@@ -516,7 +516,6 @@
       v-model="showContextMenu"
       :message="contextMsg"
       :is-self="contextMsg?.senderType === 'self'"
-      :is-pinned="conversation?.isPinned"
       :position="contextPos"
       @reply="onReply"
       @edit="onEdit"
@@ -524,7 +523,6 @@
       @undo="onUndo"
       @forward="showForwardDialog = true"
       @copy="() => {}"
-      @pin="onPin"
     />
 
     <!-- Forward dialog — v-if gate (Phase A perf 2026-05-21): chỉ mount khi user
@@ -758,7 +756,6 @@ const emit = defineEmits<{
   'undo-message': [msgId: string];
   'edit-message': [msgId: string, content: string];
   'forward-message': [msgId: string, targetIds: string[]];
-  'pin-conversation': [];
   'set-reply-to': [msg: Message];
   'set-editing': [msg: Message];
   'cancel-reply-edit': [];
@@ -1919,7 +1916,6 @@ function onEdit() {
 }
 function onDelete() { if (contextMsg.value) emit('delete-message', contextMsg.value.id); }
 function onUndo() { if (contextMsg.value) emit('undo-message', contextMsg.value.id); }
-function onPin() { emit('pin-conversation'); }
 
 
 function onForward(targetIds: string[]) {

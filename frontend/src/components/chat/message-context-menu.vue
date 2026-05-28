@@ -74,16 +74,6 @@
             <span class="ctx-item__label">Xóa</span>
           </button>
         </template>
-
-        <div class="ctx-divider"></div>
-
-        <!-- Ghim -->
-        <button class="ctx-item is-primary" role="menuitem" @click="onAction('pin')">
-          <svg class="ctx-item__icon" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M16 9V4l1-1V2H7v1l1 1v5L6 11v2h5.2v7h1.6v-7H18v-2l-2-2z"/>
-          </svg>
-          <span class="ctx-item__label">{{ isPinned ? 'Bỏ ghim' : 'Ghim' }}</span>
-        </button>
       </div>
     </div>
   </Teleport>
@@ -96,7 +86,6 @@ import type { Message } from '@/composables/use-chat';
 const props = defineProps<{
   message: Message | null;
   isSelf: boolean;
-  isPinned?: boolean;
   position: { x: number; y: number };
   modelValue: boolean;
 }>();
@@ -109,7 +98,6 @@ const emit = defineEmits<{
   undo: [];
   forward: [];
   copy: [];
-  pin: [];
 }>();
 
 const menuRef = ref<HTMLElement | null>(null);
@@ -193,7 +181,7 @@ onBeforeUnmount(() => {
 function close() {
   emit('update:modelValue', false);
 }
-function onAction(name: 'reply' | 'edit' | 'forward' | 'undo' | 'delete' | 'pin') {
+function onAction(name: 'reply' | 'edit' | 'forward' | 'undo' | 'delete') {
   // Switch để TS narrow đúng từng emit signature (union không inferr được)
   switch (name) {
     case 'reply':   emit('reply');   break;
@@ -201,7 +189,6 @@ function onAction(name: 'reply' | 'edit' | 'forward' | 'undo' | 'delete' | 'pin'
     case 'forward': emit('forward'); break;
     case 'undo':    emit('undo');    break;
     case 'delete':  emit('delete');  break;
-    case 'pin':     emit('pin');     break;
   }
   close();
 }
