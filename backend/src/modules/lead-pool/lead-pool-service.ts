@@ -444,6 +444,18 @@ interface AutoLookupResult {
   } | null;
 }
 
+// Gender mapping giữa Zalo SDK (number) và Contact.gender (string).
+function contactGenderToNumber(g: string | null | undefined): number | null {
+  if (g === 'male') return 0;
+  if (g === 'female') return 1;
+  return null;
+}
+function numberGenderToContactString(g: number | null | undefined): string | null {
+  if (g === 0) return 'male';
+  if (g === 1) return 'female';
+  return null;
+}
+
 async function buildLeadPayload(
   contactId: string,
   saleFullName: string | null = null,
@@ -565,10 +577,12 @@ function buildSuggestedOpenings(
     greeting = `Chào anh/chị ${contactName}`;
     pronoun = 'anh/chị';
   }
+  // 3 biến thể: (1) tiếp nhận tài khoản tự nhiên, (2) update thông tin mềm, (3) hỏi thăm + ưu đãi.
+  // Ngắn gọn, mở câu hỏi, không push. Ưu tiên sale dễ paste + KH dễ reply.
   return [
-    `${greeting}, ${saleIntro} là sale chăm sóc tiếp tài khoản của ${pronoun}. Em đọc lại lịch sử thấy mình đã quan tâm dự án trước đây, không biết hiện tại ${pronoun} còn nhu cầu không ạ?`,
-    `${greeting}, ${saleIntro} bên CSKH dự án — lâu rồi mình chưa nói chuyện. Em mới có thông tin cập nhật, gửi để ${pronoun} tham khảo nhé?`,
-    `${greeting}, ${saleIntro} phụ trách CSKH tài khoản này. Bên em đang có ưu đãi mới, ${pronoun} có thuận tiện 5 phút để em chia sẻ không ạ?`,
+    `${greeting}, ${saleIntro} bên CSKH dự án đây ạ. Em vừa nhận tiếp tài khoản của ${pronoun}, em xem lại thấy ${pronoun} từng quan tâm bên em. Hiện ${pronoun} còn đang tìm hiểu không ạ?`,
+    `${greeting}, ${saleIntro} đây ạ. Lâu rồi bên em chưa cập nhật thông tin mới cho ${pronoun} — bên em vừa có update mới, em gửi ${pronoun} tham khảo nhé?`,
+    `${greeting}, ${saleIntro} bên dự án đây ạ. Dạo này ${pronoun} ổn không? Em có ít ưu đãi mới bên em vừa ra, lúc nào ${pronoun} tiện em chia sẻ ngắn ạ.`,
   ];
 }
 
@@ -588,7 +602,7 @@ async function autoLookupZaloForLead(args: {
   const contact = await prisma.contact.findUnique({
     where: { id: args.contactId },
     select: {
-      id: true, phone: true, phoneNormalized: true, hasZalo: true,
+      id: true, phone: true, phoneNormalized: true, hasZalo: true, gender: true,
       friends: {
         where: { zaloAccount: { ownerUserId: args.saleUserId } },
         select: { id: true, zaloAccountId: true, zaloUidInNick: true, zaloDisplayName: true, zaloAvatarUrl: true, zaloGlobalId: true },
@@ -599,20 +613,28 @@ async function autoLookupZaloForLead(args: {
   const phone = contact.phoneNormalized || contact.phone;
   if (!phone) return null;
 
-  // Đã có Friend với nick OWN của sale → skip SDK call (cache hit)
-  if (contact.friends.length > 0) {
+  // Cache hit: Friend đã có với nick OWN của sale + Contact đã có gender → skip SDK.
+  // Nếu thiếu gender → fallthrough SDK lookup (1 lần backfill, sau đó cache permanent).
+  if (contact.friends.length > 0 && contact.gender) {
     const existing = contact.friends[0];
     const nick = await prisma.zaloAccount.findUnique({
       where: { id: existing.zaloAccountId },
       select: { displayName: true },
     });
+    const cachedGender = contactGenderToNumber(contact.gender);
     return {
       found: true,
       uid: existing.zaloUidInNick,
       nickUsed: nick?.displayName ?? null,
       nickId: existing.zaloAccountId,
-      // zaloProfile null vì không lookup lại → FE dùng câu chào generic (gender không biết)
-      zaloProfile: null,
+      zaloProfile: {
+        uid: existing.zaloUidInNick,
+        zaloName: existing.zaloDisplayName,
+        username: null,
+        avatar: existing.zaloAvatarUrl,
+        gender: cachedGender,
+        dob: null, bio: null, bizPkg: null, accountStatus: null, isFriend: null,
+      },
     };
   }
 
@@ -675,6 +697,9 @@ async function autoLookupZaloForLead(args: {
     },
   });
 
+  // Persist gender vào Contact (string) để cache hit lần sau vẫn có gender cho câu chào.
+  // SDK trả number: 0=Nam → "male", 1=Nữ → "female". Chỉ ghi nếu Contact chưa có gender.
+  const genderString = numberGenderToContactString(extra.gender);
   await prisma.contact.update({
     where: { id: args.contactId },
     data: {
@@ -683,6 +708,7 @@ async function autoLookupZaloForLead(args: {
       hasZalo: true,
       avatarUrl: contact.hasZalo ? undefined : (extra.avatar ?? undefined),
       zaloUid: foundUid, // legacy field — keep for backward compat
+      gender: !contact.gender && genderString ? genderString : undefined,
     },
   }).catch(() => {});
 
