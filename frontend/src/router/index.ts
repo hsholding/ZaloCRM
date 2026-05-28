@@ -112,10 +112,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm/templates',   name: 'Settings.Templates',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'templates' } },
 
       // 🔌 Channels & Integrations
-      { path: 'channels/zalo',         name: 'Settings.ZaloAccounts', component: () => import('@/views/ZaloAccountsView.vue') },
-      { path: 'channels/rate-limit',   name: 'Settings.RateLimit',    component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'rate-limit' } },
-      { path: 'channels/automation',   name: 'Settings.Automation',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'automation' } },
-      { path: 'channels/integrations', name: 'Settings.Integrations', component: () => import('@/views/IntegrationsView.vue') },
+      { path: 'channels/zalo',             name: 'Settings.ZaloAccounts',    component: () => import('@/views/ZaloAccountsView.vue') },
+      // Phase Multi-Source Lead Ads 2026-05-27
+      { path: 'channels/facebook-leadads', name: 'Settings.FacebookLeadAds', component: () => import('@/views/settings/FacebookLeadAdsPage.vue') },
+      { path: 'channels/rate-limit',       name: 'Settings.RateLimit',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'rate-limit' } },
+      { path: 'channels/automation',       name: 'Settings.Automation',      component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'automation' } },
+      { path: 'channels/integrations',     name: 'Settings.Integrations',    component: () => import('@/views/IntegrationsView.vue') },
 
       // 🛠 Dev & API
       { path: 'dev/api',           name: 'Settings.Api',          component: () => import('@/views/ApiSettingsView.vue') },
