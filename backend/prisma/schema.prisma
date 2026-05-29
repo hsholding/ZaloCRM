@@ -2480,7 +2480,7 @@ model NotifyDedupState {
 // → stuck sweeper after 5 phút release back to pool (documented duplicate-send risk).
 model FriendRequestOutbox {
   id                      String    @id @default(uuid())
-  customerListEntryId     String    @unique @map("customer_list_entry_id")
+  customerListEntryId     String    @map("customer_list_entry_id")
   triggerId               String    @map("trigger_id")
   nickId                  String    @map("nick_id")
   contactId               String    @map("contact_id")
@@ -2503,6 +2503,7 @@ model FriendRequestOutbox {
   welcomeRetryCount       Int       @default(0) @map("welcome_retry_count")
   welcomeLastError        String?   @map("welcome_last_error") @db.Text
 
+  @@unique([customerListEntryId, kind])
   @@index([sendStatus, sequenceMaterializedAt])
   @@index([nickId, createdAt]) // hot index for todayCount recovery on worker restart
   @@index([kind, sendStatus], map: "idx_outbox_kind_send_status_run_at")

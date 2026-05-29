@@ -16,8 +16,6 @@
 //   (spike #3 verified). Multi-instance setup: instance B sees lock taken
 //   by instance A → 0 worker spawn → log warning.
 
-import { randomUUID } from 'crypto';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { zaloOps } from '../../../shared/zalo-operations.js';
@@ -408,24 +406,8 @@ async function runTick(nickId: string): Promise<void> {
           sequenceSnapshot: null,
           zaloLeadgenId: 'already_friend',
           isTentative: false,
+          kind: 'FRIEND_REQUEST',
         });
-        // Wave 2: Enqueue welcome probe to gate Phase 2 enrollment.
-        // Welcome gửi independent of friend-request response (no waiting for accept).
-        await prisma.friendRequestOutbox.create({
-          data: {
-            id: randomUUID(),
-            customerListEntryId: entry.id,
-            triggerId: entry.triggerId,
-            contactId,
-            nickId,
-            kind: 'WELCOME_PROBE',
-            parentTaskId: null,
-            allowStrangerMessage: true,
-            sendStatus: 'success',
-            successorSequenceId: trigger.successorSequenceId,
-            sequenceVersionSnapshot: Prisma.JsonNull,
-          },
-        }).catch(err => logger.warn('[nick-worker] welcome-probe enqueue failed:', err));
         worker.todayCount++;
         return;
       }
@@ -489,25 +471,8 @@ async function runTick(nickId: string): Promise<void> {
       sequenceSnapshot: null, // drainer re-fetches sequence at materialize time
       zaloLeadgenId,
       isTentative,
+      kind: 'FRIEND_REQUEST',
     });
-
-    // Wave 2: Enqueue welcome probe to gate Phase 2 enrollment.
-    // Welcome gửi independent of friend-request response (no waiting for accept).
-    await prisma.friendRequestOutbox.create({
-      data: {
-        id: randomUUID(),
-        customerListEntryId: entry.id,
-        triggerId: entry.triggerId,
-        contactId,
-        nickId,
-        kind: 'WELCOME_PROBE',
-        parentTaskId: null,
-        allowStrangerMessage: true,
-        sendStatus: 'success',
-        successorSequenceId: trigger.successorSequenceId,
-        sequenceVersionSnapshot: Prisma.JsonNull,
-      },
-    }).catch(err => logger.warn('[nick-worker] welcome-probe enqueue failed:', err));
 
     // Update worker state
     worker.todayCount++;

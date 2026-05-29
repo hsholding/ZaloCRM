@@ -25,6 +25,7 @@ import { zaloOps } from '../../../shared/zalo-operations.js';
 
 let probeInterval: NodeJS.Timeout | null = null;
 let busy = false;
+let tickCounter = 0;
 
 interface ProbeRow {
   id: string;
@@ -75,9 +76,20 @@ async function processRow(row: ProbeRow): Promise<void> {
     },
   });
   if (!org?.welcomeMessageTemplate) {
-    await prisma.friendRequestOutbox.update({
-      where: { id: row.id },
-      data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: 'no template configured' },
+    // Contact may not exist yet (early Wave 1.5 rows had contact_id = null).
+    // Guard the contact update so a missing contact doesn't crash the tx and
+    // strand the row with the claim token still set in welcome_last_error.
+    await prisma.$transaction(async (tx) => {
+      await tx.friendRequestOutbox.update({
+        where: { id: row.id },
+        data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: 'no template configured', welcomeSentAt: new Date() },
+      });
+      if (row.contact_id) {
+        await tx.contact.updateMany({
+          where: { id: row.contact_id },
+          data: { welcomeSentAt: new Date() },
+        });
+      }
     });
     return;
   }
@@ -94,10 +106,16 @@ async function processRow(row: ProbeRow): Promise<void> {
   ]);
 
   if (!friend) {
-    await prisma.friendRequestOutbox.update({
-      where: { id: row.id },
-      data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: 'friend record missing' },
-    });
+    await prisma.$transaction([
+      prisma.friendRequestOutbox.update({
+        where: { id: row.id },
+        data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: 'friend record missing', welcomeSentAt: new Date() },
+      }),
+      prisma.contact.update({
+        where: { id: row.contact_id },
+        data: { welcomeSentAt: new Date() },
+      }),
+    ]);
     return;
   }
 
@@ -125,6 +143,20 @@ async function processRow(row: ProbeRow): Promise<void> {
   const channelLabel = isWarm ? 'friend_msg' : 'stranger_inbox';
   const msg = await renderGreeting(org.welcomeMessageTemplate, row.contact_id, row.nick_id);
 
+  // Race-safe contact lock: atomically claim welcomeSentAt before network send.
+  // Any concurrent worker (or replay) that also picked this contact will get 0 rows.
+  const lockClaim = await prisma.contact.updateMany({
+    where: { id: row.contact_id, welcomeSentAt: null },
+    data: { welcomeSentAt: new Date() },
+  });
+  if (lockClaim.count === 0) {
+    await prisma.friendRequestOutbox.update({
+      where: { id: row.id },
+      data: { welcomeOutcome: 'DUPLICATE_SKIP', welcomeSentAt: new Date() },
+    });
+    return;
+  }
+
   try {
     await zaloOps.sendMessage(row.nick_id, friend.zaloUidInNick, 0, {
       msg,
@@ -137,7 +169,7 @@ async function processRow(row: ProbeRow): Promise<void> {
       }),
       prisma.contact.update({
         where: { id: row.contact_id },
-        data: { welcomeSentAt: new Date(), welcomeChannel: channelLabel },
+        data: { welcomeChannel: channelLabel },
       }),
     ]);
     logger.info(`[welcome-probe] sent outbox=${row.id} channel=${channelLabel}`);
@@ -147,17 +179,25 @@ async function processRow(row: ProbeRow): Promise<void> {
     if (kind === 'BLOCKED_STRANGER') {
       await prisma.friendRequestOutbox.update({
         where: { id: row.id },
-        data: { welcomeOutcome: 'BLOCKED_STRANGER', welcomeLastError: errMsg },
+        data: { welcomeOutcome: 'BLOCKED_STRANGER', welcomeLastError: errMsg, welcomeSentAt: new Date() },
       });
     } else if (kind === 'TRANSIENT' && row.welcome_retry_count < org.welcomeMaxRetries) {
-      await prisma.friendRequestOutbox.update({
-        where: { id: row.id },
-        data: { welcomeRetryCount: { increment: 1 }, welcomeLastError: errMsg },
-      });
+      // Transient retry: release the lock so retry can re-claim cleanly.
+      await prisma.$transaction([
+        prisma.friendRequestOutbox.update({
+          where: { id: row.id },
+          data: { welcomeRetryCount: { increment: 1 }, welcomeLastError: errMsg },
+        }),
+        prisma.contact.update({
+          where: { id: row.contact_id },
+          data: { welcomeSentAt: null },
+        }),
+      ]);
     } else {
+      // HARD_FAIL (including max retries exhausted) — terminal, keep contact lock set.
       await prisma.friendRequestOutbox.update({
         where: { id: row.id },
-        data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: errMsg },
+        data: { welcomeOutcome: 'HARD_FAIL', welcomeLastError: errMsg, welcomeSentAt: new Date() },
       });
     }
   }
@@ -168,21 +208,57 @@ async function runProbeTick(): Promise<void> {
   if (!isWithinWorkingHours()) return;
   busy = true;
   try {
+    // Atomic UPDATE ... RETURNING claim pattern (replaces SELECT FOR UPDATE SKIP LOCKED).
+    // We mark welcome_last_error with a per-process claim token so any concurrent worker
+    // sees this row is taken (welcome_last_error NOT LIKE 'claim:%' in the inner SELECT).
+    // 60s `created_at` floor doubles as a stale-claim recovery: if a prior process crashed
+    // mid-tick, the row becomes re-claimable on the next eligible tick.
+    const claimToken = 'claim:' + (++tickCounter) + ':' + process.pid;
     const rows = await prisma.$queryRaw<ProbeRow[]>`
-      SELECT o.id, o.nick_id, o.contact_id, o.welcome_retry_count, t.org_id
-      FROM friend_request_outbox o
-      JOIN automation_triggers t ON t.id = o.trigger_id
-      WHERE o.kind = 'WELCOME_PROBE'
-        AND o.welcome_outcome IS NULL
-        AND o.created_at <= NOW() - make_interval(secs => COALESCE(
-          (SELECT welcome_delay_after_friend_req_sec FROM organizations WHERE id = t.org_id), 60))
-      ORDER BY o.created_at ASC
-      LIMIT 5
-      FOR UPDATE SKIP LOCKED
+      UPDATE friend_request_outbox
+      SET welcome_last_error = ${claimToken}
+      WHERE id IN (
+        SELECT o.id
+        FROM friend_request_outbox o
+        JOIN automation_triggers t ON t.id = o.trigger_id
+        WHERE o.kind = 'WELCOME_PROBE'
+          AND o.welcome_outcome IS NULL
+          AND (o.welcome_last_error IS NULL OR o.welcome_last_error NOT LIKE 'claim:%')
+          AND o.created_at <= NOW() - INTERVAL '60 seconds'
+          AND o.created_at <= NOW() - make_interval(secs => COALESCE(
+            (SELECT welcome_delay_after_friend_req_sec FROM organizations WHERE id = t.org_id), 60))
+        ORDER BY o.created_at ASC
+        LIMIT 5
+      )
+      RETURNING
+        id,
+        nick_id,
+        contact_id,
+        welcome_retry_count,
+        (SELECT org_id FROM automation_triggers WHERE id = friend_request_outbox.trigger_id) AS org_id
     `;
     for (const row of rows) {
-      await processRow(row).catch((err) =>
-        logger.error(`[welcome-probe] processRow ${row.id} failed:`, err));
+      await processRow(row).catch(async (err) => {
+        const errMsg = (err?.message ?? String(err)).slice(0, 500);
+        logger.error(
+          `[welcome-probe] processRow ${row.id} failed: ${errMsg}`,
+          err,
+        );
+        // Clear the claim token so the row is re-pickable on the next tick.
+        // Without this, a processRow throw leaves welcome_last_error = 'claim:...'
+        // and the row is permanently filtered out by the claim WHERE.
+        try {
+          await prisma.friendRequestOutbox.update({
+            where: { id: row.id },
+            data: { welcomeLastError: errMsg },
+          });
+        } catch (recoverErr) {
+          logger.error(
+            `[welcome-probe] failed to release claim on ${row.id}:`,
+            recoverErr,
+          );
+        }
+      });
     }
   } catch (err) {
     logger.error('[welcome-probe] tick error:', err);

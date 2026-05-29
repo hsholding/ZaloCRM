@@ -121,4 +121,108 @@ export async function orgRoutes(app: FastifyInstance): Promise<void> {
       }
     },
   );
+
+  // ── Welcome message config (Phase Wave 2 welcome-probe 2026-05-29) ──────
+  // GET trả về 5 field welcome_*. PATCH cho phép admin sửa template + thông số.
+  // Spec memory: feedback_zalocrm_no_jargon_with_anh.md — UI tiếng Việt.
+
+  app.get(
+    '/api/v1/organization/welcome-config',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      try {
+        const org = await prisma.organization.findUnique({
+          where: { id: user.orgId },
+          select: {
+            welcomeMessageTemplate: true,
+            welcomeDelayAfterFriendReqSec: true,
+            welcomeStrangerInboxEnabled: true,
+            welcomeMaxRetries: true,
+            welcomeHardFailStops: true,
+          },
+        });
+        if (!org) return reply.status(404).send({ error: 'Organization not found' });
+        return org;
+      } catch {
+        return reply.status(500).send({ error: 'Failed to fetch welcome config' });
+      }
+    },
+  );
+
+  app.patch(
+    '/api/v1/organization/welcome-config',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      const body = (request.body ?? {}) as {
+        welcomeMessageTemplate?: string | null;
+        welcomeDelayAfterFriendReqSec?: number;
+        welcomeStrangerInboxEnabled?: boolean;
+        welcomeMaxRetries?: number;
+        welcomeHardFailStops?: boolean;
+      };
+
+      const data: Record<string, unknown> = {};
+
+      if (body.welcomeMessageTemplate !== undefined) {
+        const raw = body.welcomeMessageTemplate;
+        if (raw === null || raw === '') {
+          data.welcomeMessageTemplate = null;
+        } else if (typeof raw === 'string') {
+          const trimmed = raw.trim();
+          if (trimmed.length > 4000) {
+            return reply.status(400).send({ error: 'Mẫu tin nhắn không được dài hơn 4000 ký tự' });
+          }
+          data.welcomeMessageTemplate = trimmed;
+        }
+      }
+
+      if (body.welcomeDelayAfterFriendReqSec !== undefined) {
+        const v = Number(body.welcomeDelayAfterFriendReqSec);
+        if (!Number.isFinite(v) || v < 0 || v > 3600) {
+          return reply.status(400).send({ error: 'Trễ gửi (giây) phải từ 0 đến 3600' });
+        }
+        data.welcomeDelayAfterFriendReqSec = Math.round(v);
+      }
+
+      if (body.welcomeMaxRetries !== undefined) {
+        const v = Number(body.welcomeMaxRetries);
+        if (!Number.isFinite(v) || v < 0 || v > 10) {
+          return reply.status(400).send({ error: 'Số lần thử lại phải từ 0 đến 10' });
+        }
+        data.welcomeMaxRetries = Math.round(v);
+      }
+
+      if (body.welcomeStrangerInboxEnabled !== undefined) {
+        data.welcomeStrangerInboxEnabled = Boolean(body.welcomeStrangerInboxEnabled);
+      }
+
+      if (body.welcomeHardFailStops !== undefined) {
+        data.welcomeHardFailStops = Boolean(body.welcomeHardFailStops);
+      }
+
+      if (Object.keys(data).length === 0) {
+        return reply.status(400).send({ error: 'Không có thay đổi nào để lưu' });
+      }
+
+      try {
+        const org = await prisma.organization.update({
+          where: { id: user.orgId },
+          data,
+          select: {
+            welcomeMessageTemplate: true,
+            welcomeDelayAfterFriendReqSec: true,
+            welcomeStrangerInboxEnabled: true,
+            welcomeMaxRetries: true,
+            welcomeHardFailStops: true,
+          },
+        });
+        logger.info(`Org welcome-config updated by ${user.email} (org=${user.orgId})`);
+        return org;
+      } catch {
+        return reply.status(500).send({ error: 'Failed to update welcome config' });
+      }
+    },
+  );
 }
