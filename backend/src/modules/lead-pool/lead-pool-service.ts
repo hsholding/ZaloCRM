@@ -361,7 +361,7 @@ async function queryForgottenCandidates(orgId: string, userId: string, config: P
       )::INTEGER AS priority_score
     FROM contacts c
     WHERE c.org_id = $1
-      AND COALESCE(c.last_inbound_at, c.created_at) < $2
+      AND COALESCE(c.last_inbound_at, c.created_at) < $2::timestamp
       AND c.consent_status != 'revoked'
       AND (c.status IS NULL OR c.status != ALL($3::text[]))
       AND (c.assigned_user_id IS NULL OR c.assigned_user_id != $4)
@@ -1545,32 +1545,10 @@ export async function getQueueTodayStats(args: { orgId: string }) {
     requestedToday,
     notedToday,
   ] = await Promise.all([
-    // pool size: candidate count consistent với queryForgottenCandidates.
-    // Phase v2.G 2026-05-29 — Fix: thêm excludedStatuses + phoneFilter + BỎ rule
-    // assigned_user_id IS NULL strict. Lead có sale cũ đã release (qua manual_return
-    // hoặc auto_return) vẫn vào pool chia lại — NOT EXISTS pending/cooldown đã đủ.
-    // Trước đây tooltip FAB và queue admin lệch nhau (FAB 3 vs Queue 0) → anh confused.
-    prisma.$queryRawUnsafe<Array<{ cnt: number }>>(`
-      SELECT COUNT(*)::INTEGER AS cnt FROM contacts c
-      WHERE c.org_id = $1
-        AND COALESCE(c.last_inbound_at, c.created_at) < NOW() - ($2 || ' days')::INTERVAL
-        AND c.consent_status != 'revoked'
-        AND (c.status IS NULL OR c.status != ALL($4::text[]))
-        AND c.merged_into IS NULL
-        ${config.requirePhoneInPool ? 'AND c.phone_normalized IS NOT NULL' : ''}
-        AND NOT EXISTS (
-          SELECT 1 FROM lead_requests lr
-          WHERE lr.contact_id = c.id
-            AND lr.note_submitted_at IS NULL AND lr.release_reason IS NULL AND lr.auto_returned_at IS NULL
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM lead_requests lr2
-          WHERE lr2.contact_id = c.id
-            AND lr2.note_submitted_at IS NOT NULL
-            AND lr2.note_submitted_at > NOW() - ($3 || ' days')::INTERVAL
-            AND lr2.release_reason IS NULL
-        )
-    `, args.orgId, String(config.forgottenThresholdDays), String(config.cooldownAfterNoteDays), config.excludedStatuses).then((r) => Number(r[0]?.cnt ?? 0)),
+    // Phase v2.H 2026-05-29 — count = forgotten contacts + customer_list entries
+    // (cả unlinked). Trước đây chỉ count Contact → bỏ qua 521 CustomerListEntry chưa
+    // link → pool size lệch với realiy (anh báo 4537 contact giữ vs 700+ CustomerList).
+    countTotalPoolAvailable(args.orgId, null, config),
 
     prisma.leadRequest.count({
       where: { contact: { orgId: args.orgId }, noteSubmittedAt: null, releaseReason: null, autoReturnedAt: null, requestedAt: { gte: startToday } },
@@ -1660,47 +1638,9 @@ export async function getLeadPoolStats(args: { orgId: string; userId: string; ro
     }),
   };
 
-  // ── Pool size (ai cũng xem được — giúp sale biết còn lead không) ──
-  // Phase v2.G 2026-05-29 — Fix: dùng cùng logic queryForgottenCandidates.
-  // Trước đây dùng prisma.contact.count với điều kiện CŨ → tooltip lệch với pool thật.
-  // BUG cũ:
-  //   - dùng lastActivity (gộp inbound+outbound) thay lastInboundAt
-  //   - thiếu rule loại lead pending (NOT EXISTS active lead_request)
-  //   - thiếu rule loại lead cooldown (NOT EXISTS noted lead_request trong N ngày)
-  const phoneFilter = config.requirePhoneInPool ? 'AND c.phone_normalized IS NOT NULL' : '';
-  const poolRows = await prisma.$queryRawUnsafe<Array<{ cnt: number }>>(
-    `
-    SELECT COUNT(*)::INTEGER AS cnt
-    FROM contacts c
-    WHERE c.org_id = $1
-      AND COALESCE(c.last_inbound_at, c.created_at) < NOW() - ($2 || ' days')::INTERVAL
-      AND c.consent_status != 'revoked'
-      AND (c.status IS NULL OR c.status != ALL($3::text[]))
-      AND (c.assigned_user_id IS NULL OR c.assigned_user_id != $4)
-      AND c.merged_into IS NULL
-      ${phoneFilter}
-      AND NOT EXISTS (
-        SELECT 1 FROM lead_requests lr
-        WHERE lr.contact_id = c.id
-          AND lr.note_submitted_at IS NULL
-          AND lr.release_reason IS NULL
-          AND lr.auto_returned_at IS NULL
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM lead_requests lr2
-        WHERE lr2.contact_id = c.id
-          AND lr2.note_submitted_at IS NOT NULL
-          AND lr2.note_submitted_at > NOW() - ($5 || ' days')::INTERVAL
-          AND lr2.release_reason IS NULL
-      )
-    `,
-    args.orgId,
-    String(config.forgottenThresholdDays),
-    config.excludedStatuses,
-    args.userId,
-    String(config.cooldownAfterNoteDays),
-  );
-  const poolAvailable = Number(poolRows[0]?.cnt ?? 0);
+  // Phase v2.H 2026-05-29 — count = forgotten + customer_list (cả unlinked).
+  // Truyền args.userId để loại lead anh đang giữ (FAB view sale-specific).
+  const poolAvailable = await countTotalPoolAvailable(args.orgId, args.userId, config);
 
   const baseResult: any = {
     role: args.role,
@@ -2095,6 +2035,99 @@ async function enrichItems(
       rowKind,
     };
   }).filter(Boolean);
+}
+
+/**
+ * Phase v2.H 2026-05-29 — Count pool availability đúng nghĩa.
+ *
+ * Trước đây tách 2 cách count:
+ *   - getLeadPoolStats.poolAvailable: chỉ count contacts (forgotten pool)
+ *   - getQueueTodayStats.poolSize: chỉ count contacts (forgotten pool)
+ *   → BỎ QUA 521 CustomerListEntry chưa link contact (yet) — đây là kho lead có
+ *     thể xin ngay (BE sẽ tạo Contact stub khi sale claim).
+ *
+ * Function này count tổng = forgotten contacts + customer_list unlinked entries.
+ * Args.userId: nếu truyền → loại lead anh đang giữ (FAB view). Nếu null → tổng org (queue admin).
+ */
+async function countTotalPoolAvailable(
+  orgId: string,
+  userId: string | null,
+  config: PoolConfig,
+): Promise<number> {
+  // Inline mọi value vào SQL (tránh PG type inference issue với mixed types).
+  // Safe vì: orgId/userId UUID validated, dates ISO format, statuses từ config server-controlled.
+  const thresholdIso = new Date(Date.now() - config.forgottenThresholdDays * 24 * 60 * 60 * 1000).toISOString();
+  const cooldownIso = new Date(Date.now() - config.cooldownAfterNoteDays * 24 * 60 * 60 * 1000).toISOString();
+  const safeOrgId = `'${orgId.replace(/'/g, "''")}'`;
+  const safeUserId = userId ? `'${userId.replace(/'/g, "''")}'` : null;
+  const phoneFilter = config.requirePhoneInPool ? 'AND c.phone_normalized IS NOT NULL' : '';
+  const statusFilter = config.excludedStatuses.length > 0
+    ? `AND (c.status IS NULL OR c.status NOT IN (${config.excludedStatuses.map(s => `'${String(s).replace(/'/g, "''")}'`).join(',')}))`
+    : '';
+  const userFilter = safeUserId ? `AND (c.assigned_user_id IS NULL OR c.assigned_user_id != ${safeUserId})` : '';
+  const userFilterCle = safeUserId
+    ? `OR EXISTS (
+        SELECT 1 FROM contacts cc
+        WHERE cc.id = cle.contact_id
+          AND (cc.assigned_user_id IS NULL OR cc.assigned_user_id != ${safeUserId})
+          AND NOT EXISTS (
+            SELECT 1 FROM lead_requests lr2
+            WHERE lr2.contact_id = cc.id
+              AND lr2.note_submitted_at IS NOT NULL
+              AND lr2.note_submitted_at > '${cooldownIso}'::timestamp
+              AND lr2.release_reason IS NULL
+          )
+      )`
+    : `OR cle.contact_id IS NOT NULL`;
+
+  const forgottenSql = `
+    SELECT COUNT(*)::INTEGER AS cnt FROM contacts c
+    WHERE c.org_id = ${safeOrgId}
+      AND COALESCE(c.last_inbound_at, c.created_at) < '${thresholdIso}'::timestamp
+      AND c.consent_status != 'revoked'
+      ${statusFilter}
+      AND c.merged_into IS NULL
+      ${phoneFilter}
+      ${userFilter}
+      AND NOT EXISTS (
+        SELECT 1 FROM lead_requests lr
+        WHERE lr.contact_id = c.id
+          AND lr.note_submitted_at IS NULL AND lr.release_reason IS NULL AND lr.auto_returned_at IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM lead_requests lr2
+        WHERE lr2.contact_id = c.id
+          AND lr2.note_submitted_at IS NOT NULL
+          AND lr2.note_submitted_at > '${cooldownIso}'::timestamp
+          AND lr2.release_reason IS NULL
+      )
+  `;
+
+  const customerListSql = `
+    SELECT COUNT(*)::INTEGER AS cnt
+    FROM customer_list_entries cle
+    JOIN customer_lists cl ON cl.id = cle.customer_list_id
+    WHERE cl.org_id = ${safeOrgId}
+      AND cl.shareable_to_pool = true
+      AND cl.archived_at IS NULL
+      AND cle.status IN ('validated', 'enriched')
+      AND cle.phone_valid = true
+      AND (
+        cle.contact_id IS NULL
+        ${userFilterCle}
+      )
+  `;
+
+  const [forgottenRows, customerListRows] = await Promise.all([
+    config.enabledSources.includes('forgotten')
+      ? prisma.$queryRawUnsafe<Array<{ cnt: number }>>(forgottenSql)
+      : Promise.resolve([{ cnt: 0 }]),
+    config.enabledSources.includes('customer_list')
+      ? prisma.$queryRawUnsafe<Array<{ cnt: number }>>(customerListSql)
+      : Promise.resolve([{ cnt: 0 }]),
+  ]);
+
+  return Number(forgottenRows[0]?.cnt ?? 0) + Number(customerListRows[0]?.cnt ?? 0);
 }
 
 // Variant non-tx của queryCustomerListCandidates cho preview (không tạo stub).
