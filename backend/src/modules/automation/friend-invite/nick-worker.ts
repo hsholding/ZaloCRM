@@ -16,9 +16,13 @@
 //   (spike #3 verified). Multi-instance setup: instance B sees lock taken
 //   by instance A → 0 worker spawn → log warning.
 
+import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../../shared/database/prisma-client.js';
 import { logger } from '../../../shared/utils/logger.js';
 import { zaloOps } from '../../../shared/zalo-operations.js';
+import { resolveOrCreateContact } from '../../contacts/resolve-contact.js';
+import { applyFriendTransition } from '../../zalo/friend-event-handler.js';
 import { nickWorkerLockKey } from './fnv1a.js';
 import { claimNextEntry, markEntrySent, releaseEntryFailed } from './pool-query.js';
 
@@ -27,11 +31,12 @@ import { claimNextEntry, markEntrySent, releaseEntryFailed } from './pool-query.
 const TEST_MODE = process.env.FRIEND_INVITE_TEST_MODE === 'true';
 
 interface WorkerState {
-  intervalId: NodeJS.Timeout;
+  timeoutId: NodeJS.Timeout | null;
   nickId: string;
   orgId: string;
   todayCount: number; // friend-request count today (from Outbox)
   isBusy: boolean; // prevent overlapping ticks
+  stopped: boolean; // flag to halt self-scheduling loop
 }
 
 const nickWorkers = new Map<string, WorkerState>();
@@ -96,18 +101,32 @@ export async function startNickWorker(nickId: string, orgId: string): Promise<vo
   // Recover state from DB
   const todayCount = await recoverTodayCount(nickId);
 
-  // Spawn interval
-  const delayMs = getRandomDelayMs();
-  const intervalId = setInterval(() => {
-    void runTick(nickId).catch((err) =>
-      logger.error(`[nick-worker] tick error for nick=${nickId}:`, err),
-    );
-  }, delayMs);
+  const state: WorkerState = {
+    timeoutId: null,
+    nickId,
+    orgId,
+    todayCount,
+    isBusy: false,
+    stopped: false,
+  };
+  nickWorkers.set(nickId, state);
 
-  nickWorkers.set(nickId, { intervalId, nickId, orgId, todayCount, isBusy: false });
+  // 2026-05-29 jitter fix — replace setInterval (constant delay locked at
+  // spawn time) with self-scheduling setTimeout so every tick re-rolls the
+  // 20-40 phút random window. Prevents predictable cadence per nick.
+  const scheduleNext = (): void => {
+    if (state.stopped) return;
+    const next = getRandomDelayMs();
+    state.timeoutId = setTimeout(() => {
+      void runTick(nickId)
+        .catch((err) => logger.error(`[nick-worker] tick error for nick=${nickId}:`, err))
+        .finally(() => scheduleNext());
+    }, next);
+  };
+  scheduleNext();
 
   logger.info(
-    `[nick-worker] spawned nick=${nickId} delay=${Math.round(delayMs / 1000)}s todayCount=${todayCount} ${TEST_MODE ? '(TEST mode 1min)' : ''}`,
+    `[nick-worker] spawned nick=${nickId} todayCount=${todayCount} ${TEST_MODE ? '(TEST mode 1min)' : '(prod 20-40min jittered)'}`,
   );
 
   // Immediate first tick (after small jitter 1-5s) — don't wait full delay on spawn.
@@ -126,7 +145,8 @@ export async function stopNickWorker(nickId: string): Promise<void> {
   const worker = nickWorkers.get(nickId);
   if (!worker) return;
 
-  clearInterval(worker.intervalId);
+  worker.stopped = true;
+  if (worker.timeoutId) clearTimeout(worker.timeoutId);
   nickWorkers.delete(nickId);
 
   const lockKey = nickWorkerLockKey(nickId);
@@ -162,6 +182,46 @@ export function getNickWorkerState(nickId: string): {
   const w = nickWorkers.get(nickId);
   if (!w) return null;
   return { isRunning: true, todayCount: w.todayCount, isBusy: w.isBusy };
+}
+
+/**
+ * Resolve Contact.id để gắn FriendRequestOutbox + AutomationTask.
+ *
+ * Wave 1.5-B: delegate to canonical helper resolveOrCreateContact.
+ * Helper xử lý 6-tier lookup theo rule anh chốt (UID không khớp, chỉ globalId + phone).
+ * Spec: ~/.gstack/projects/zalocrm/EVO-THANH-private-hs-design-friend-invite-flow-review-20260529.md
+ *
+ * `enrichment` (optional) = data Zalo SDK trả về sau findUser thành công.
+ * Helper sẽ dùng zaloUidInNick + zaloName để Friend reverse-lookup + stub naming.
+ */
+async function resolveContactIdForEntry(
+  entry: { id: string; contactId: string | null; phoneE164: string | null; phoneRaw: string; nameRaw: string | null },
+  orgId: string,
+  enrichment?: { nickId: string; zaloUid: string; zaloName?: string | null; avatarUrl?: string | null; gender?: 'female' | 'male' | null } | null,
+): Promise<string> {
+  if (entry.contactId) return entry.contactId;
+
+  const result = await resolveOrCreateContact({
+    orgId,
+    zaloAccountId: enrichment?.nickId ?? null,
+    zaloUidInNick: enrichment?.zaloUid ?? null,
+    phone: entry.phoneE164 ?? entry.phoneRaw,
+    fallbackFullName: enrichment?.zaloName?.trim() || entry.nameRaw?.trim() || null,
+    fallbackAvatarUrl: enrichment?.avatarUrl ?? null,
+    gender: enrichment?.gender ?? null,
+  });
+
+  await prisma.customerListEntry.update({
+    where: { id: entry.id },
+    data: { contactId: result.id },
+  });
+
+  if (result.created) {
+    logger.info(`[nick-worker] new stub Contact ${result.id} for entry ${entry.id} via ${result.matchedVia}`);
+  } else {
+    logger.info(`[nick-worker] resolved Contact ${result.id} for entry ${entry.id} via ${result.matchedVia}`);
+  }
+  return result.id;
 }
 
 /**
@@ -239,10 +299,17 @@ async function runTick(nickId: string): Promise<void> {
     let isTentative = false;
     let zaloName = entry.nameRaw ?? 'bạn';
     let zaloGender: 'female' | 'male' | undefined;
+
+    // Hoist enrichment scope outside try — both success + "already friend" catch
+    // path need uid for Friend reverse-lookup in resolveContactIdForEntry.
+    let resolvedUid = '';
+    let resolvedDisplayName: string | null = null;
+    let resolvedAvatarUrl: string | null = null;
+
     try {
       // 2.1: Find UID by phone (resolves UID + name + gender)
       const found = (await zaloOps.findUser(nickId, entry.phoneE164)) as
-        | { uid?: string; displayName?: string; zaloName?: string; gender?: unknown }
+        | { uid?: string; displayName?: string; zaloName?: string; gender?: unknown; avatar?: string }
         | null
         | undefined;
       if (!found || !found.uid) {
@@ -254,13 +321,15 @@ async function runTick(nickId: string): Promise<void> {
         logger.info(`[nick-worker] ${nickId} entry=${entry.id} skipped: no Zalo profile for phone`);
         return;
       }
-      const uid = found.uid;
-      // Extract gender + name from Zalo profile
+      resolvedUid = found.uid;
+      // Extract gender + name + avatar from Zalo profile
       const profile = found as Record<string, unknown>;
       const rawGender = profile.gender;
       if (rawGender === 'female' || rawGender === 0 || rawGender === '0') zaloGender = 'female';
       else if (rawGender === 'male' || rawGender === 1 || rawGender === '1') zaloGender = 'male';
       const profileName = (profile.displayName as string | undefined) ?? (profile.zaloName as string | undefined);
+      resolvedDisplayName = profileName?.trim() || null;
+      resolvedAvatarUrl = (profile.avatar as string | undefined)?.trim() || null;
       if (profileName) zaloName = profileName.trim().split(/\s+/).pop() ?? zaloName;
 
       // 2.2: Render greeting template (per memory reference_greeting_template_vars)
@@ -272,7 +341,7 @@ async function runTick(nickId: string): Promise<void> {
         .replaceAll('{sale}', saleName);
 
       // 2.3: Send friend request
-      const sendResult = await zaloOps.sendFriendRequest(nickId, greeting, uid);
+      const sendResult = await zaloOps.sendFriendRequest(nickId, greeting, resolvedUid);
       // sendResult format từ zca-js — pick leadgen id if available
       const sr = sendResult as Record<string, unknown> | undefined;
       zaloLeadgenId = String(sr?.reqId ?? sr?.requestId ?? sr?.id ?? '');
@@ -282,7 +351,7 @@ async function runTick(nickId: string): Promise<void> {
         where: { id: entry.id },
         data: {
           hasZalo: true,
-          zaloUid: uid,
+          zaloUid: resolvedUid,
           zaloName: profileName ?? entry.nameRaw,
           resolvedByNickId: nickId,
         },
@@ -295,16 +364,68 @@ async function runTick(nickId: string): Promise<void> {
       // (no friend request needed) → mark processed + insert Outbox for sequence.
       if (msg.includes('đã là bạn') || msg.includes('already friend') || code === 'ALREADY_FRIEND') {
         logger.info(`[nick-worker] ${nickId} entry=${entry.id} already friend → mark processed`);
+        // B2 fix: persist enrichment for "already friend" path too (was previously skipped)
+        if (resolvedUid) {
+          await prisma.customerListEntry.update({
+            where: { id: entry.id },
+            data: {
+              hasZalo: true,
+              zaloUid: resolvedUid,
+              zaloName: resolvedDisplayName ?? entry.nameRaw,
+              resolvedByNickId: nickId,
+            },
+          });
+        }
+        const contactId = await resolveContactIdForEntry(entry, worker.orgId, resolvedUid ? {
+          nickId,
+          zaloUid: resolvedUid,
+          zaloName: resolvedDisplayName,
+          avatarUrl: resolvedAvatarUrl,
+          gender: zaloGender ?? null,
+        } : null);
+        // Wave 1.5-B: upsert Friend row (nick, contact, uid) — send-message gate
+        // requires this row even khi "already friend" path detected.
+        if (resolvedUid) {
+          try {
+            await applyFriendTransition({
+              orgId: worker.orgId,
+              zaloAccountId: nickId,
+              contactId,
+              zaloUidInNick: resolvedUid,
+              newFriendshipStatus: 'accepted',
+              source: 'sync', // no becameFriendAt — Zalo SDK chỉ nói "đã là bạn", không trả ngày
+            });
+          } catch (err) {
+            logger.warn(`[nick-worker] applyFriendTransition failed entry=${entry.id}:`, err);
+          }
+        }
         await markEntrySent({
           entryId: entry.id,
           triggerId: entry.triggerId,
           nickId,
-          contactId: entry.contactId ?? entry.id,
+          contactId,
           successorSequenceId: trigger.successorSequenceId,
           sequenceSnapshot: null,
           zaloLeadgenId: 'already_friend',
           isTentative: false,
         });
+        // Wave 2: Enqueue welcome probe to gate Phase 2 enrollment.
+        // Welcome gửi independent of friend-request response (no waiting for accept).
+        await prisma.friendRequestOutbox.create({
+          data: {
+            id: randomUUID(),
+            customerListEntryId: entry.id,
+            triggerId: entry.triggerId,
+            contactId,
+            nickId,
+            kind: 'WELCOME_PROBE',
+            parentTaskId: null,
+            allowStrangerMessage: true,
+            sendStatus: 'success',
+            successorSequenceId: trigger.successorSequenceId,
+            sequenceVersionSnapshot: Prisma.JsonNull,
+          },
+        }).catch(err => logger.warn('[nick-worker] welcome-probe enqueue failed:', err));
         worker.todayCount++;
         return;
       }
@@ -336,16 +457,57 @@ async function runTick(nickId: string): Promise<void> {
     }
 
     // Phase 3: RESULT — Success path
+    const contactId = await resolveContactIdForEntry(entry, worker.orgId, resolvedUid ? {
+      nickId,
+      zaloUid: resolvedUid,
+      zaloName: resolvedDisplayName,
+      avatarUrl: resolvedAvatarUrl,
+          gender: zaloGender ?? null,
+    } : null);
+    // Wave 1.5-B: upsert Friend row với pending_sent status (KH chưa accept,
+    // nhưng sequence cần row này để biết friendship state khi check gate).
+    if (resolvedUid) {
+      try {
+        await applyFriendTransition({
+          orgId: worker.orgId,
+          zaloAccountId: nickId,
+          contactId,
+          zaloUidInNick: resolvedUid,
+          newFriendshipStatus: 'pending_sent',
+          source: 'event',
+        });
+      } catch (err) {
+        logger.warn(`[nick-worker] applyFriendTransition failed entry=${entry.id}:`, err);
+      }
+    }
     await markEntrySent({
       entryId: entry.id,
       triggerId: entry.triggerId,
       nickId,
-      contactId: entry.contactId ?? entry.id, // fallback to entry.id if contact not yet linked
+      contactId,
       successorSequenceId: trigger.successorSequenceId,
       sequenceSnapshot: null, // drainer re-fetches sequence at materialize time
       zaloLeadgenId,
       isTentative,
     });
+
+    // Wave 2: Enqueue welcome probe to gate Phase 2 enrollment.
+    // Welcome gửi independent of friend-request response (no waiting for accept).
+    await prisma.friendRequestOutbox.create({
+      data: {
+        id: randomUUID(),
+        customerListEntryId: entry.id,
+        triggerId: entry.triggerId,
+        contactId,
+        nickId,
+        kind: 'WELCOME_PROBE',
+        parentTaskId: null,
+        allowStrangerMessage: true,
+        sendStatus: 'success',
+        successorSequenceId: trigger.successorSequenceId,
+        sequenceVersionSnapshot: Prisma.JsonNull,
+      },
+    }).catch(err => logger.warn('[nick-worker] welcome-probe enqueue failed:', err));
 
     // Update worker state
     worker.todayCount++;

@@ -17,6 +17,7 @@ import type { BlockActionType } from '../blocks/types.js';
 // ── Pure gate functions ───────────────────────────────────────────────────
 
 // Hour range gate — returns retryAfter for next valid window if blocked.
+// Mọi cài đặt nhân hệ thống theo Asia/Ho_Chi_Minh (UTC+7) — container có thể UTC.
 export function checkHourRange(
   now: Date,
   rules: SequenceRuntimeRules,
@@ -24,24 +25,25 @@ export function checkHourRange(
   const range = rules.allowedHourRange;
   if (!range) return { passed: true };
   const [start, end] = range;
-  const hour = now.getHours();
-  if (hour >= start && hour <= end) {
+  // Convert "now" to VN local clock by shifting +7h, then read as if UTC.
+  const vnNow = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const vnHour = vnNow.getUTCHours();
+  if (vnHour >= start && vnHour <= end) {
     return { passed: true };
   }
-  // Compute next valid window:
-  //   if hour < start: today at `start`
-  //   if hour > end: tomorrow at `start`
-  const retryAfter = new Date(now);
-  if (hour < start) {
-    retryAfter.setHours(start, 0, 0, 0);
+  // Compute next valid VN window, then convert back to UTC for retryAfter.
+  const vnRetry = new Date(vnNow);
+  if (vnHour < start) {
+    vnRetry.setUTCHours(start, 0, 0, 0);
   } else {
-    retryAfter.setDate(retryAfter.getDate() + 1);
-    retryAfter.setHours(start, 0, 0, 0);
+    vnRetry.setUTCDate(vnRetry.getUTCDate() + 1);
+    vnRetry.setUTCHours(start, 0, 0, 0);
   }
+  const retryAfter = new Date(vnRetry.getTime() - 7 * 60 * 60 * 1000);
   return {
     passed: false,
     failedGate: 'hour_range',
-    detail: `Outside hours [${start}:00 - ${end}:00], retry at ${retryAfter.toISOString()}`,
+    detail: `Outside hours VN [${start}:00 - ${end}:00], retry at ${retryAfter.toISOString()}`,
     retryAfter,
   };
 }
@@ -56,7 +58,8 @@ export function checkPerNickThrottle(
   lastSentAt: Date | null,
   rules: SequenceRuntimeRules,
 ): GateResult {
-  if (!rules.perNickThrottle) return { passed: true };
+  // Treat null/undefined/false as DISABLED (UI may write absent/false when off).
+  if (rules.perNickThrottle == null || rules.perNickThrottle === false) return { passed: true };
   if (!lastSentAt) return { passed: true };
 
   const delay = rules.randomDelayPerSend;
@@ -105,7 +108,8 @@ export function checkStopOnAccept(
   rules: SequenceRuntimeRules,
   acceptedNicksCount: number,
 ): GateResult {
-  if (!rules.stopOnAccept) return { passed: true };
+  // Treat null/undefined/false as DISABLED.
+  if (rules.stopOnAccept == null || rules.stopOnAccept === false) return { passed: true };
   if (acceptedNicksCount === 0) return { passed: true };
   return {
     passed: false,
@@ -123,7 +127,9 @@ export function checkCrossNickRecency(
   latestOtherNickActivity: Date | null,
 ): GateResult {
   const days = rules.crossNickRecencyDays;
-  if (!days || days <= 0) return { passed: true };
+  // Treat null/undefined/0 as DISABLED — FE writes 0 when field cleared.
+  if (days == null || days === 0) return { passed: true };
+  if (days <= 0) return { passed: true };
   if (!latestOtherNickActivity) return { passed: true };
 
   const cutoffMs = days * 24 * 60 * 60 * 1000;

@@ -412,45 +412,19 @@ class ZaloAccountPool {
       const uid = conv.externalThreadId;
       if (!uid) continue;
 
-      let contact = await prisma.contact.findFirst({
-        where: { zaloUid: uid, orgId: account.orgId },
-        select: { id: true },
+      // Wave 1.5-B (B7 fix): dùng central resolver thay vì Contact.zaloUid only dedup
+      // (vi phạm rule per-account UID — Phong Lâm 2 Contacts regression).
+      const { resolveOrCreateContact } = await import('../contacts/resolve-contact.js');
+      const resolved = await resolveOrCreateContact({
+        orgId: account.orgId,
+        zaloAccountId: accountId,
+        zaloUidInNick: uid,
+        enrichViaGetUserInfo: true,
       });
-
-      if (!contact) {
-        let zaloName = '';
-        let avatar = '';
-        let phone = '';
-        try {
-          const result = await api.getUserInfo(uid);
-          const profiles = result?.changed_profiles || {};
-          const profile = profiles[uid] || profiles[`${uid}_0`];
-          if (profile) {
-            zaloName = profile.zaloName || profile.zalo_name || profile.displayName || profile.display_name || '';
-            avatar = profile.avatar || '';
-            phone = profile.phoneNumber || '';
-          }
-        } catch (err) {
-          logger.warn(`[zalo:${accountId}] getUserInfo failed for ${uid}:`, err);
-        }
-
-        const { randomUUID } = await import('node:crypto');
-        contact = await prisma.contact.create({
-          data: {
-            id: randomUUID(),
-            orgId: account.orgId,
-            zaloUid: uid,
-            fullName: zaloName || 'Unknown',
-            avatarUrl: avatar || null,
-            phone: phone || null,
-          },
-          select: { id: true },
-        });
-      }
 
       await prisma.conversation.update({
         where: { id: conv.id },
-        data: { contactId: contact.id },
+        data: { contactId: resolved.id },
       });
     }
 

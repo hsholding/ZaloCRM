@@ -466,6 +466,9 @@ export async function customerListEntryRoutes(app: FastifyInstance): Promise<voi
           dupWithListId,
           dupWithListEntryId,
           dupWithContactId,
+          // Wave 1.5-B (B5 fix): link entry.contactId ngay khi import phát hiện dup_with_crm.
+          // Tránh downstream nick-worker re-resolve qua phone (có thể tạo stub tách rời Contact cha).
+          contactId: dupWithContactId,
           hasZalo: null,
           multiNickCount: 0,
           systemMessages: fullMsgs,

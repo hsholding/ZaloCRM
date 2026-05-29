@@ -62,36 +62,46 @@
         </div>
 
         <div v-else>
-        <div class="d-flex align-center mb-3">
+        <!-- Top bar: name + Lưu + Switch on/off + kebab menu -->
+        <div class="seq-topbar">
           <v-text-field
             v-model="editing.name"
             variant="plain"
             density="compact"
-            placeholder="Tên kịch bản..."
+            placeholder="Tên luồng kịch bản..."
             hide-details
-            class="text-h6"
-            style="max-width: 480px;"
+            class="seq-topbar__name"
           />
-          <v-spacer />
-          <v-btn size="small" variant="text" :loading="saving" @click="saveSequence">
-            <v-icon start>mdi-content-save</v-icon>
-            Lưu
-          </v-btn>
-          <v-btn
-            v-if="editing.id"
-            size="small" variant="text"
-            :color="editing.enabled ? 'success' : 'grey'"
-            @click="toggleEnabled"
-          >
-            <v-icon start>{{ editing.enabled ? 'mdi-toggle-switch' : 'mdi-toggle-switch-off' }}</v-icon>
-            {{ editing.enabled ? 'Đang bật' : 'Đang tắt' }}
-          </v-btn>
-          <v-btn v-if="editing.id" size="small" variant="text" @click="onDuplicate">
-            <v-icon start>mdi-content-copy</v-icon> Nhân bản
-          </v-btn>
-          <v-btn v-if="editing.id" size="small" variant="text" color="error" @click="onDelete">
-            <v-icon start>mdi-delete</v-icon> Xoá
-          </v-btn>
+          <div class="seq-topbar__actions">
+            <v-btn size="small" variant="tonal" :loading="saving" @click="saveSequence">
+              <v-icon start>mdi-content-save</v-icon>
+              Lưu
+            </v-btn>
+            <v-switch
+              v-if="editing.id"
+              :model-value="editing.enabled"
+              @update:model-value="toggleEnabled"
+              color="success"
+              :label="editing.enabled ? 'Đang chạy' : 'Đang tắt'"
+              hide-details
+              density="compact"
+              inset
+              class="seq-topbar__switch"
+            />
+            <v-menu v-if="editing.id">
+              <template #activator="{ props }">
+                <v-btn icon="mdi-dots-vertical" size="small" variant="text" v-bind="props" />
+              </template>
+              <v-list density="compact">
+                <v-list-item @click="onDuplicate" prepend-icon="mdi-content-copy">
+                  <v-list-item-title>Nhân bản luồng</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="onDelete" prepend-icon="mdi-delete" class="text-error">
+                  <v-list-item-title>Xoá luồng</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+          </div>
         </div>
 
         <v-textarea
@@ -99,57 +109,109 @@
           variant="outlined"
           density="compact"
           rows="2"
-          placeholder="Mô tả ngắn (optional)"
+          placeholder="Mô tả ngắn (tuỳ chọn)"
           hide-details
           class="mb-4"
         />
 
-        <!-- Runtime rules collapsible -->
-        <v-expansion-panels variant="accordion" class="mb-4">
-          <v-expansion-panel>
-            <v-expansion-panel-title>
-              <v-icon class="mr-2">mdi-cog</v-icon>
-              Cấu hình chạy (delay, giờ, throttle, recency, stop-on-accept)
-            </v-expansion-panel-title>
-            <v-expansion-panel-text>
-              <div class="d-flex flex-wrap" style="gap: 16px;">
-                <div style="min-width: 240px;">
-                  <div class="text-caption mb-1">Giờ được phép chạy</div>
-                  <div class="d-flex align-center" style="gap: 8px;">
-                    <v-text-field :model-value="hourStart" @update:model-value="setHourStart($event)" type="number" min="0" max="23" variant="outlined" density="compact" hide-details style="width: 80px" />
-                    <span>→</span>
-                    <v-text-field :model-value="hourEnd" @update:model-value="setHourEnd($event)" type="number" min="0" max="23" variant="outlined" density="compact" hide-details style="width: 80px" />
-                  </div>
+        <!-- 3 setting cards: Khi nào / Bảo vệ KH / Dừng bám đuổi -->
+        <div class="seq-rule-cards">
+          <!-- Card 1: Khi nào chạy -->
+          <div class="seq-rule-card">
+            <div class="seq-rule-card__header">
+              <v-icon size="20" color="primary">mdi-clock-outline</v-icon>
+              <strong>Khi nào chạy</strong>
+            </div>
+            <div class="seq-rule-card__body">
+              <div class="seq-rule-row">
+                <label>Giờ làm việc</label>
+                <div class="seq-rule-input-pair">
+                  <v-text-field :model-value="hourStart" @update:model-value="setHourStart($event)" type="number" min="0" max="23" variant="outlined" density="compact" hide-details suffix="h" />
+                  <span class="seq-rule-arrow">→</span>
+                  <v-text-field :model-value="hourEnd" @update:model-value="setHourEnd($event)" type="number" min="0" max="23" variant="outlined" density="compact" hide-details suffix="h" />
                 </div>
-                <div style="min-width: 240px;">
-                  <div class="text-caption mb-1">Delay ngẫu nhiên giữa mỗi lần gửi (phút)</div>
-                  <div class="d-flex align-center" style="gap: 8px;">
-                    <v-text-field :model-value="delayMin" @update:model-value="setDelayMin($event)" type="number" min="0" variant="outlined" density="compact" hide-details style="width: 80px" />
-                    <span>→</span>
-                    <v-text-field :model-value="delayMax" @update:model-value="setDelayMax($event)" type="number" min="0" variant="outlined" density="compact" hide-details style="width: 80px" />
-                  </div>
+                <p class="seq-rule-hint">
+                  Chỉ gửi từ {{ hourStart }}h đến {{ hourEnd }}h (giờ Việt Nam). Ngoài khung này sẽ hoãn sang sáng hôm sau.
+                </p>
+              </div>
+              <div class="seq-rule-row">
+                <label>Giãn cách giữa các lần gửi</label>
+                <div class="seq-rule-input-pair">
+                  <v-text-field :model-value="delayMin" @update:model-value="setDelayMin($event)" type="number" min="0" variant="outlined" density="compact" hide-details suffix="phút" />
+                  <span class="seq-rule-arrow">→</span>
+                  <v-text-field :model-value="delayMax" @update:model-value="setDelayMax($event)" type="number" min="0" variant="outlined" density="compact" hide-details suffix="phút" />
                 </div>
-                <div style="min-width: 200px;">
-                  <div class="text-caption mb-1">Cross-nick recency (ngày)</div>
-                  <v-text-field :model-value="recencyDays" @update:model-value="setRecencyDays($event)" type="number" min="0" variant="outlined" density="compact" hide-details style="width: 120px" />
-                  <div class="text-caption text-medium-emphasis mt-1">Bỏ qua nếu KH active với nick khác trong N ngày</div>
+                <p class="seq-rule-hint">
+                  Mỗi nick chờ ngẫu nhiên {{ delayMin === delayMax ? delayMin : `${delayMin}–${delayMax}` }} phút trước khi gửi tin tiếp theo. Giả lập tự nhiên, tránh Zalo phát hiện bot.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Bảo vệ KH không spam -->
+          <div class="seq-rule-card">
+            <div class="seq-rule-card__header">
+              <v-icon size="20" color="warning">mdi-shield-account-outline</v-icon>
+              <strong>Bảo vệ KH không spam</strong>
+            </div>
+            <div class="seq-rule-card__body">
+              <div class="seq-rule-row">
+                <label>Tránh gửi trùng KH</label>
+                <div class="seq-rule-input-pair">
+                  <v-text-field :model-value="recencyDays" @update:model-value="setRecencyDays($event)" type="number" min="0" variant="outlined" density="compact" hide-details suffix="ngày" style="max-width: 140px" />
                 </div>
+                <p class="seq-rule-hint" v-if="recencyDays > 0">
+                  Nếu KH đã chạm với nick CRM khác trong <strong>{{ recencyDays }} ngày</strong> qua → bỏ qua, không bám đuổi (tránh nhiều sale spam 1 KH).
+                </p>
+                <p class="seq-rule-hint" v-else>
+                  <strong>Đã tắt</strong> — gửi cho mọi KH, kể cả nick khác vừa chăm hôm qua. Phù hợp test, KHÔNG khuyến nghị production.
+                </p>
+              </div>
+              <div class="seq-rule-row seq-rule-row--switch">
                 <v-switch
                   :model-value="editing.runtimeRules.perNickThrottle ?? true"
                   @update:model-value="editing.runtimeRules.perNickThrottle = !!$event"
-                  label="Per-nick throttle (cap chia đều)"
+                  color="success"
                   hide-details
+                  density="compact"
+                  inset
                 />
+                <div>
+                  <label>Giãn đều số tin giữa các nick</label>
+                  <p class="seq-rule-hint">
+                    Nick nào gửi gần đây phải chờ; nick chưa gửi sẽ ưu tiên. Phân bổ tải đều, tránh 1 nick gửi dồn quá nhiều.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Khi nào dừng bám đuổi -->
+          <div class="seq-rule-card">
+            <div class="seq-rule-card__header">
+              <v-icon size="20" color="error">mdi-stop-circle-outline</v-icon>
+              <strong>Khi nào dừng bám đuổi</strong>
+            </div>
+            <div class="seq-rule-card__body">
+              <div class="seq-rule-row seq-rule-row--switch">
                 <v-switch
                   :model-value="editing.runtimeRules.stopOnAccept ?? true"
                   @update:model-value="editing.runtimeRules.stopOnAccept = !!$event"
-                  label="Dừng các nick còn lại khi 1 nick đã accept"
+                  color="success"
                   hide-details
+                  density="compact"
+                  inset
                 />
+                <div>
+                  <label>Dừng nick khác khi 1 nick đã kết bạn</label>
+                  <p class="seq-rule-hint">
+                    Nếu 1 nick được KH đồng ý kết bạn → các nick còn lại tự dừng gửi tin nhắn (tránh nhiều nick cùng chăm 1 KH).
+                  </p>
+                </div>
               </div>
-            </v-expansion-panel-text>
-          </v-expansion-panel>
-        </v-expansion-panels>
+            </div>
+          </div>
+        </div>
 
         <!-- Vertical step diagram -->
         <SequenceStepEditor
@@ -441,5 +503,109 @@ async function onDelete() {
 @media (max-width: 900px) {
   .seq-layout { grid-template-columns: 1fr; }
   .seq-sidebar { position: relative; max-height: none; }
+}
+
+/* ── Wave 1.5-C UI Redesign: top bar + 3 rule cards ──────────────────────── */
+.seq-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--at-border);
+}
+.seq-topbar__name {
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+}
+.seq-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.seq-topbar__switch {
+  margin: 0 4px;
+}
+.seq-topbar__switch :deep(.v-label) {
+  font-size: 13px;
+  opacity: 1;
+  font-weight: 500;
+}
+
+.seq-rule-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.seq-rule-card {
+  background: #fff;
+  border: 1px solid var(--at-border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.seq-rule-card:hover {
+  border-color: var(--at-accent-soft, #cbd5e1);
+}
+.seq-rule-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--at-border);
+  font-size: 14px;
+}
+.seq-rule-card__header strong {
+  color: var(--at-ink);
+}
+.seq-rule-card__body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.seq-rule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.seq-rule-row > label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--at-ink);
+}
+.seq-rule-row--switch {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+}
+.seq-rule-row--switch > div {
+  flex: 1;
+}
+.seq-rule-input-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 300px;
+}
+.seq-rule-input-pair :deep(.v-text-field) {
+  max-width: 110px;
+}
+.seq-rule-arrow {
+  color: var(--at-ink-muted);
+  font-weight: 500;
+}
+.seq-rule-hint {
+  font-size: 12px;
+  color: var(--at-ink-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+.seq-rule-hint strong {
+  color: var(--at-ink);
+  font-weight: 600;
 }
 </style>

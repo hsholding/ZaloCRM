@@ -76,6 +76,7 @@ import { sequenceRoutes } from './modules/automation/sequences/sequence-routes.j
 import { triggerRoutes } from './modules/automation/triggers/trigger-routes.js';
 import { friendInviteRoutes } from './modules/automation/friend-invite/friend-invite-routes.js';
 import { startFriendInviteSweepers, stopFriendInviteSweepers } from './modules/automation/friend-invite/sweepers.js';
+import { startWelcomeProbeWorker, stopWelcomeProbeWorker } from './modules/automation/friend-invite/welcome-probe-worker.js';
 import { bootstrapFriendInviteWorkers, stopAllNickWorkers } from './modules/automation/friend-invite/nick-worker.js';
 import { broadcastRoutes } from './modules/automation/broadcasts/broadcast-routes.js';
 import { webhookRoutes as automationWebhookRoutes } from './modules/automation/webhooks/webhook-routes.js';
@@ -335,6 +336,8 @@ async function bootstrap() {
       registerCustomerListEventHandlers();
       // Phase Friend Invite Queue 2026-05-28 — sweepers + per-nick workers
       startFriendInviteSweepers();
+      // Wave 2 Welcome Probe 2026-05-29 — poll WELCOME_PROBE outbox rows
+      startWelcomeProbeWorker();
       // bootstrap workers — guard with try/catch để container không restart loop
       // nếu DB chưa migrate đủ cột (đang phát triển feature)
       try {

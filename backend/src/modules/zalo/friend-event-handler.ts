@@ -17,6 +17,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { zaloPool } from './zalo-pool.js';
+import { resolveOrCreateContact } from '../contacts/resolve-contact.js';
 
 // zca-js FriendEventType numeric values (mirrored from models/FriendEvent.d.ts)
 export const FriendEventType = {
@@ -79,7 +80,9 @@ interface ContactRef {
 
 /**
  * Resolve (or create) the Contact row matching a Zalo uid in a given nick.
- * Tries Friend.zaloUidInNick first, then Contact.zaloUid global, then creates a stub.
+ * Wave 1.5-B: delegates to central resolveOrCreateContact helper.
+ * Helper handles Friend reverse-lookup, getUserInfo enrichment, globalId/username/phone match,
+ * and race-safe ON CONFLICT stub creation.
  */
 async function resolveContact(
   zaloAccountId: string,
@@ -88,93 +91,14 @@ async function resolveContact(
   fallbackName?: string | null,
 ): Promise<ContactRef | null> {
   if (!uid) return null;
-
-  const existingFriend = await prisma.friend.findFirst({
-    where: { zaloAccountId, zaloUidInNick: uid },
-    select: { contactId: true, contact: { select: { orgId: true } } },
+  const result = await resolveOrCreateContact({
+    orgId,
+    zaloAccountId,
+    zaloUidInNick: uid,
+    fallbackFullName: fallbackName,
+    enrichViaGetUserInfo: true,
   });
-  if (existingFriend) return { id: existingFriend.contactId, orgId: existingFriend.contact.orgId };
-
-  const byGlobalUid = await prisma.contact.findFirst({
-    where: { orgId, zaloUid: uid },
-    select: { id: true, orgId: true },
-  });
-  if (byGlobalUid) return byGlobalUid;
-
-  // Cross-nick contact matching — UID này từ POV nick mới, có thể đã là Contact
-  // dưới UID khác (per-account UID rule). Hỏi Zalo getUserInfo để lấy globalId/
-  // username/phone → match Contact đã có thay vì tạo stub mới. Tránh trường hợp
-  // friend:updated event emit cho contactId stub mới mà UI conv bind contactId cũ.
-  let resolvedGlobalId: string | null = null;
-  let resolvedUsername: string | null = null;
-  let resolvedPhone: string | null = null;
-  let resolvedName: string | null = null;
-  let resolvedAvatar: string | null = null;
-  try {
-    const instance = zaloPool.getInstance(zaloAccountId);
-    if (instance?.api?.getUserInfo && instance.status === 'connected') {
-      const result: any = await instance.api.getUserInfo(uid);
-      const profiles = result?.changed_profiles || {};
-      const profile = profiles[uid] || profiles[`${uid}_0`];
-      if (profile) {
-        resolvedGlobalId = String(profile.globalId || '').trim() || null;
-        resolvedUsername = String(profile.username || '').trim() || null;
-        resolvedPhone = String(profile.phoneNumber || '').trim() || null;
-        resolvedName = (profile.zaloName || profile.zalo_name || profile.displayName || profile.display_name || '').trim() || null;
-        resolvedAvatar = (profile.avatar || '').trim() || null;
-      }
-    }
-  } catch (err) {
-    logger.debug(`[friend-event] getUserInfo(${uid}) failed in resolveContact:`, err);
-  }
-
-  if (resolvedGlobalId || resolvedUsername) {
-    const byIdentity = await prisma.contact.findFirst({
-      where: {
-        orgId,
-        OR: [
-          ...(resolvedGlobalId ? [{ zaloGlobalId: resolvedGlobalId }] : []),
-          ...(resolvedUsername ? [{ zaloUsername: resolvedUsername }] : []),
-        ],
-      },
-      select: { id: true, orgId: true },
-    });
-    if (byIdentity) {
-      logger.info(`[friend-event] Cross-nick match: uid=${uid} → existing contact=${byIdentity.id} via globalId/username`);
-      return byIdentity;
-    }
-  }
-
-  if (resolvedPhone) {
-    const { normalizePhone } = await import('../../shared/utils/phone.js');
-    const phoneNormalized = normalizePhone(resolvedPhone);
-    if (phoneNormalized) {
-      const byPhone = await prisma.contact.findFirst({
-        where: { orgId, phoneNormalized },
-        select: { id: true, orgId: true },
-      });
-      if (byPhone) {
-        logger.info(`[friend-event] Cross-nick match: uid=${uid} → existing contact=${byPhone.id} via phone`);
-        return byPhone;
-      }
-    }
-  }
-
-  // Fresh — create stub Contact với data fetch được từ Zalo (avatar/name/globalId/etc)
-  const created = await prisma.contact.create({
-    data: {
-      id: randomUUID(),
-      orgId,
-      zaloUid: uid,
-      fullName: resolvedName || fallbackName || 'Unknown',
-      zaloGlobalId: resolvedGlobalId,
-      zaloUsername: resolvedUsername,
-      avatarUrl: resolvedAvatar,
-      phone: resolvedPhone,
-    },
-    select: { id: true, orgId: true },
-  });
-  return created;
+  return { id: result.id, orgId: result.orgId };
 }
 
 /**

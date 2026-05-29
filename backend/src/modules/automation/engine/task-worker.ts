@@ -138,6 +138,7 @@ async function processTask(taskId: string): Promise<void> {
       campaign: {
         select: {
           id: true, state: true, sequenceId: true,
+          triggerId: true, // SECONDARY FIX 2026-05-29 — used to load nick whitelist
           rulesSnapshot: true,
           sequence: { select: { id: true, enabled: true, steps: true } },
         },
@@ -233,16 +234,56 @@ async function processTask(taskId: string): Promise<void> {
   //      - send_message: must find existing Friend (accepted/pending)
   //      - request_friend: round-robin across connected nicks, dedup attempts, cap-aware
   let assignedNickId = task.assignedNickId;
+  // SECONDARY FIX 2026-05-29 — load trigger.segmentSpec.nickIds whitelist
+  // for friend_invite_to_list triggers so selector can't pick outside the
+  // configured nick set. Other trigger types pass null (no filter).
+  // Hoisted above the nick-pick branch so the disconnect/disallow guard
+  // below can reuse it when re-picking a pinned nick that went stale.
+  let allowedNickIds: string[] | null = null;
+  if ((actionType === 'request_friend' || actionType === 'send_message') && task.campaign.triggerId) {
+    const trigger = await prisma.automationTrigger.findUnique({
+      where: { id: task.campaign.triggerId },
+      select: { eventType: true, segmentSpec: true },
+    });
+    if (trigger?.eventType === 'friend_invite_to_list') {
+      const spec = trigger.segmentSpec as { nickIds?: string[] } | null;
+      if (spec?.nickIds && Array.isArray(spec.nickIds) && spec.nickIds.length > 0) {
+        allowedNickIds = spec.nickIds;
+      }
+    }
+  }
+
+  // 2026-05-29 disconnect/disallow guard — if task has a pinned nick, verify
+  // it's still connected AND still in the whitelist. Otherwise clear pin and
+  // fall through to pickNickForTask so a healthy nick can pick up the task.
+  if (assignedNickId && (actionType === 'request_friend' || actionType === 'send_message')) {
+    const pinnedNick = await prisma.zaloAccount.findFirst({
+      where: { id: assignedNickId, orgId: task.orgId },
+      select: { status: true },
+    });
+    if (!pinnedNick || pinnedNick.status !== 'connected' || (allowedNickIds && !allowedNickIds.includes(assignedNickId))) {
+      logger.warn(`[task-worker] task ${taskId} pinned nick disconnected/disallowed — re-picking`);
+      await prisma.automationTask.update({
+        where: { id: task.id },
+        data: { assignedNickId: null },
+      });
+      assignedNickId = null;
+    }
+  }
+
   if (!assignedNickId && (actionType === 'request_friend' || actionType === 'send_message')) {
     const pick = await pickNickForTask({
       orgId: task.orgId,
       contactId: task.contact.id,
       actionType,
+      allowedNickIds,
     });
     if (!pick) {
       const reason = actionType === 'send_message'
         ? 'no_friend_nick'
-        : 'all_nicks_capped_or_attempted';
+        : allowedNickIds
+          ? 'nick_not_in_whitelist'
+          : 'all_nicks_capped_or_attempted';
       await markSkipped(taskId, reason, 'pickNickForTask returned null');
       return;
     }
@@ -507,6 +548,11 @@ async function markDoneAndAdvance(
   const jitter = jitterMin + Math.random() * Math.max(0, jitterMax - jitterMin);
   const scheduledAt = new Date(now.getTime() + nextStep.delayMinutes * 60 * 1000 + jitter);
 
+  // PRIMARY FIX 2026-05-29 — Nick continuity across sequence steps.
+  // Pin assignedNickId to the nick that just executed step (currentStepIdx) so
+  // step N+1 reuses the SAME nick. Previously omitted → worker re-ran
+  // pickNickForTask at next execution, which could pick a different nick for
+  // the same KH. Mirrors materializeSequenceForContact() carry-over pattern.
   await prisma.automationTask.create({
     data: {
       id: randomUUID(),
@@ -517,6 +563,7 @@ async function markDoneAndAdvance(
       currentStepIdx: nextIdx,
       currentBlockId: block.id,
       blockSnapshot: block.content as object,
+      assignedNickId: nickId, // inherit nick from previous step (pin once at step 1)
       scheduledAt,
       state: TASK_STATES.QUEUED,
     },

@@ -639,7 +639,32 @@ export async function chatRoutes(app: FastifyInstance) {
       if (!contact.zaloUsername && sdkUsername) contactPatch.zaloUsername = sdkUsername;
 
       if (Object.keys(contactPatch).length > 0) {
-        await prisma.contact.update({ where: { id: conv.contactId }, data: contactPatch });
+        try {
+          await prisma.contact.update({ where: { id: conv.contactId }, data: contactPatch });
+        } catch (err: any) {
+          // Wave 1.5-B: unique constraint conflict trên (orgId, zaloGlobalId) — stub Contact
+          // đụng canonical Contact đã có. Merge stub INTO canonical thay vì throw lên user.
+          if (err?.code === 'P2002' && sdkGlobalId) {
+            const canonical = await prisma.contact.findFirst({
+              where: { orgId: user.orgId, zaloGlobalId: sdkGlobalId, mergedInto: null, id: { not: conv.contactId } },
+              select: { id: true },
+            });
+            if (canonical) {
+              logger.info(`[touch-profile] Conflict → merging stub ${conv.contactId} INTO canonical ${canonical.id} via globalId=${sdkGlobalId}`);
+              // Re-point Conversation + Friend + Outbox + Task + Appointment to canonical
+              await prisma.$transaction([
+                prisma.conversation.updateMany({ where: { contactId: conv.contactId }, data: { contactId: canonical.id } }),
+                prisma.friend.updateMany({ where: { contactId: conv.contactId }, data: { contactId: canonical.id } }),
+                prisma.friendRequestOutbox.updateMany({ where: { contactId: conv.contactId }, data: { contactId: canonical.id } }),
+                prisma.automationTask.updateMany({ where: { contactId: conv.contactId }, data: { contactId: canonical.id } }),
+                prisma.customerListEntry.updateMany({ where: { contactId: conv.contactId }, data: { contactId: canonical.id } }),
+                prisma.contact.update({ where: { id: conv.contactId }, data: { mergedInto: canonical.id, phoneNormalized: null, phone: null, updatedAt: new Date() } }),
+              ]);
+              return { ok: true, merged: true, intoContactId: canonical.id };
+            }
+          }
+          throw err;
+        }
       }
 
       // Friend snapshot: zaloDisplayName + zaloAvatarUrl — per-pair, luôn refresh

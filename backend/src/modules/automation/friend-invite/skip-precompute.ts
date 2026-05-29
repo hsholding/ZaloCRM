@@ -75,32 +75,35 @@ export async function precomputeAndSeedPool(input: {
   const entryStatusList =
     entryStatuses.length > 0 ? entryStatuses.map((s) => `'${s.replace(/'/g, "''")}'`).join(',') : "''";
 
-  // Fix 2026-05-29: scalar subqueries trong CASE thay vì LEFT JOIN cross product
+  // Fix 2026-05-29 (Wave 1.5-B): semantic 0 = "không apply rule" (anh chốt).
+  //   friendCap=0  → KHÔNG check friend count (gửi cho cả KH đã là bạn)
+  //   recencyDays=0 → KHÔNG check recency (gửi cả KH vừa chat)
+  //
+  // Scalar subqueries trong CASE thay vì LEFT JOIN cross product
   // (cross product không match entries thiếu Friend/Conversation → bỏ sót entries).
+  // Inline orgId + friendCap vào clause string (escape SQL — orgId là UUID đã validate
+  // tại route layer, friendCap là number → safe). Tránh dynamic $param binding mismatch.
+  const orgIdLit = `'${orgId.replace(/'/g, "''")}'`;
+  const friendCapClause = friendCap > 0
+    ? `WHEN COALESCE((SELECT COUNT(*) FROM friends f WHERE f.org_id = ${orgIdLit} AND f.contact_id = e.contact_id), 0) > ${friendCap} THEN 'skipped_friend_cap'`
+    : '';
+  const recencyClause = recencyDays > 0
+    ? `WHEN COALESCE((SELECT MAX(m.sent_at) FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE c.org_id = ${orgIdLit} AND c.contact_id = e.contact_id AND m.sent_at > NOW() - INTERVAL '${Math.max(recencyDays, 30)} days'), TIMESTAMP 'epoch') > NOW() - INTERVAL '${recencyDays} days' THEN 'skipped_recency'`
+    : '';
+
   const rawUpdateResult = await prisma.$executeRawUnsafe(
     `
     UPDATE customer_list_entries e
     SET queue_status = CASE
       WHEN e.has_zalo = false THEN 'skipped_no_zalo'
-      WHEN COALESCE((
-        SELECT COUNT(*) FROM friends f
-        WHERE f.org_id = $2 AND f.contact_id = e.contact_id
-      ), 0) > $3 THEN 'skipped_friend_cap'
-      WHEN COALESCE((
-        SELECT MAX(m.sent_at)
-        FROM messages m
-        JOIN conversations c ON c.id = m.conversation_id
-        WHERE c.org_id = $2 AND c.contact_id = e.contact_id
-          AND m.sent_at > NOW() - INTERVAL '${Math.max(recencyDays, 30)} days'
-      ), TIMESTAMP 'epoch') > NOW() - INTERVAL '${recencyDays} days' THEN 'skipped_recency'
+      ${friendCapClause}
+      ${recencyClause}
       WHEN e.status IN (${entryStatusList}) THEN 'skipped_status'
       ELSE 'queued_for_pickup'
     END
     WHERE e.trigger_id = $1
     `,
     triggerId,
-    orgId,
-    friendCap,
   );
 
   // 3. Count results

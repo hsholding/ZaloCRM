@@ -18,6 +18,7 @@ import { materializeSequenceForContact } from '../engine/campaign-materializer.j
 
 let stuckSweeperInterval: NodeJS.Timeout | null = null;
 let triggerSweeperInterval: NodeJS.Timeout | null = null;
+let exhaustedSweeperInterval: NodeJS.Timeout | null = null;
 let drainerInterval: NodeJS.Timeout | null = null;
 
 /**
@@ -85,14 +86,44 @@ async function runTriggerCompletionSweeper(): Promise<void> {
 }
 
 /**
+ * Exhausted-nicks sweeper — flip queued_for_pickup → failed_permanent
+ * khi failedNickIds đã cover hết trigger.segmentSpec.nickIds.
+ *
+ * Lý do tách sweep: releaseEntryFailed mark failed_permanent ngay khi release,
+ * nhưng entries từ trước fix này (hoặc race window) có thể stuck queued_for_pickup
+ * mà không entry nào claim được (vì NOT (failedNickIds @> nickId) loại hết).
+ */
+async function runExhaustedNicksSweeper(): Promise<void> {
+  try {
+    const result = await prisma.$executeRaw`
+      UPDATE customer_list_entries e
+      SET queue_status = 'failed_permanent'
+      FROM automation_triggers t
+      WHERE e.trigger_id = t.id
+        AND e.queue_status = 'queued_for_pickup'
+        AND t.event_type = 'friend_invite_to_list'
+        AND jsonb_array_length(e.failed_nick_ids) >= jsonb_array_length(t.segment_spec->'nickIds')
+        AND jsonb_array_length(t.segment_spec->'nickIds') > 0
+    `;
+    if (result > 0) {
+      logger.warn(`[exhausted-sweeper] ${result} entries marked failed_permanent (all trigger nicks failed)`);
+    }
+  } catch (err) {
+    logger.error('[exhausted-sweeper] error:', err);
+  }
+}
+
+/**
  * Outbox drainer — materialize sequence campaigns for outbox rows.
  */
 async function runOutboxDrainer(): Promise<void> {
   try {
     // Pick rows with sequence_materialized_at IS NULL, exclude rows already 5 attempts (alert state)
+    // Wave 2: Gate sequence enrollment by welcome success. KH chặn tin lạ (BLOCKED_STRANGER) hoặc fail cứng (HARD_FAIL) sẽ KHÔNG enroll.
     const rows = await prisma.friendRequestOutbox.findMany({
       where: {
-        sendStatus: { in: ['success', 'tentative'] },
+        kind: 'WELCOME_PROBE',
+        welcomeOutcome: { in: ['SENT_STRANGER', 'SENT_FRIEND'] },
         sequenceMaterializedAt: null,
         successorSequenceId: { not: null },
         attemptCount: { lt: 5 },
@@ -183,24 +214,52 @@ async function runOutboxDrainer(): Promise<void> {
 }
 
 /**
+ * Welcome-failed cleanup — mark BLOCKED_STRANGER / HARD_FAIL rows with
+ * sequenceMaterializedAt = sentAt so they exit poll set, but keep for analytics.
+ */
+async function runWelcomeFailedCleanup(): Promise<void> {
+  try {
+    const result = await prisma.$executeRaw`
+      UPDATE friend_request_outbox
+      SET sequence_materialized_at = sent_at
+      WHERE kind = 'WELCOME_PROBE'
+        AND welcome_outcome IN ('BLOCKED_STRANGER', 'HARD_FAIL')
+        AND sequence_materialized_at IS NULL
+        AND sent_at IS NOT NULL
+    `;
+    if (result > 0) {
+      logger.info(`[welcome-failed-cleanup] retired ${result} BLOCKED_STRANGER/HARD_FAIL rows from poll set`);
+    }
+  } catch (err) {
+    logger.error('[welcome-failed-cleanup] error:', err);
+  }
+}
+
+let welcomeFailedCleanupInterval: NodeJS.Timeout | null = null;
+
+/**
  * Start all 3 sweepers.
  */
 export function startFriendInviteSweepers(): void {
-  if (stuckSweeperInterval || triggerSweeperInterval || drainerInterval) {
+  if (stuckSweeperInterval || triggerSweeperInterval || exhaustedSweeperInterval || drainerInterval || welcomeFailedCleanupInterval) {
     logger.warn('[friend-invite] sweepers already running, skip start');
     return;
   }
 
   stuckSweeperInterval = setInterval(() => void runStuckSweeper(), 60_000);
   triggerSweeperInterval = setInterval(() => void runTriggerCompletionSweeper(), 60_000);
+  exhaustedSweeperInterval = setInterval(() => void runExhaustedNicksSweeper(), 60_000);
   drainerInterval = setInterval(() => void runOutboxDrainer(), 30_000);
+  welcomeFailedCleanupInterval = setInterval(() => void runWelcomeFailedCleanup(), 60_000);
 
-  logger.info('[friend-invite] sweepers started: stuck(60s) + trigger-complete(60s) + outbox-drainer(30s)');
+  logger.info('[friend-invite] sweepers started: stuck(60s) + trigger-complete(60s) + exhausted-nicks(60s) + outbox-drainer(30s) + welcome-failed-cleanup(60s)');
 
   // Initial run on start
   void runStuckSweeper();
+  void runExhaustedNicksSweeper();
   void runTriggerCompletionSweeper();
   void runOutboxDrainer();
+  void runWelcomeFailedCleanup();
 }
 
 /**
@@ -209,9 +268,13 @@ export function startFriendInviteSweepers(): void {
 export function stopFriendInviteSweepers(): void {
   if (stuckSweeperInterval) clearInterval(stuckSweeperInterval);
   if (triggerSweeperInterval) clearInterval(triggerSweeperInterval);
+  if (exhaustedSweeperInterval) clearInterval(exhaustedSweeperInterval);
   if (drainerInterval) clearInterval(drainerInterval);
+  if (welcomeFailedCleanupInterval) clearInterval(welcomeFailedCleanupInterval);
   stuckSweeperInterval = null;
   triggerSweeperInterval = null;
+  exhaustedSweeperInterval = null;
   drainerInterval = null;
+  welcomeFailedCleanupInterval = null;
   logger.info('[friend-invite] sweepers stopped');
 }

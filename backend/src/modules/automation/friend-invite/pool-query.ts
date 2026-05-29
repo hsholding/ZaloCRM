@@ -37,7 +37,8 @@ export interface ClaimedEntry {
  *   - queueStatus = 'queued_for_pickup'
  *   - trigger belongs to active list-based triggers anh chọn nickId này
  *   - NOT (failedNickIds @> [nickId])  — nick này chưa fail entry
- *   - jsonb_array_length(failedNickIds) < 5  — entry chưa fail 5 lần
+ *   - jsonb_array_length(failedNickIds) < trigger.nickIds.length  — vẫn còn nick eligible
+ *     (entries hết nick eligible đã được markFailedPermanent ở releaseEntryFailed)
  *
  * Order: rowIndex ASC, then trigger creation time ASC (FIFO).
  */
@@ -70,7 +71,7 @@ export async function claimNextEntry(nickId: string, orgId: string): Promise<Cla
         AND t.event_type = 'friend_invite_to_list'
         AND (t.segment_spec->'nickIds')::jsonb @> to_jsonb(${nickId}::text)
         AND NOT (e.failed_nick_ids @> to_jsonb(${nickId}::text))
-        AND jsonb_array_length(e.failed_nick_ids) < 5
+        AND jsonb_array_length(e.failed_nick_ids) < jsonb_array_length(t.segment_spec->'nickIds')
       ORDER BY e.row_index ASC, t.created_at ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -154,19 +155,28 @@ export async function releaseEntryFailed(input: {
         END
     WHERE id = ${input.entryId}
   `;
-  // After append, check if all 5 nicks failed → mark failed_permanent.
-  // Race-safe: re-read array length.
+  // After append, check if failedNickIds covers all trigger's nicks → mark failed_permanent.
+  // Trigger's eligible nick count = segmentSpec.nickIds.length (config tại trigger create time).
+  // Race-safe: re-read array + trigger spec (no Prisma relation enforced — query separately).
   const after = await prisma.customerListEntry.findUnique({
     where: { id: input.entryId },
-    select: { failedNickIds: true },
+    select: { failedNickIds: true, triggerId: true },
   });
-  if (Array.isArray(after?.failedNickIds) && (after!.failedNickIds as unknown[]).length >= 5) {
+  if (!after || !after.triggerId) return;
+  const failedArr = Array.isArray(after.failedNickIds) ? (after.failedNickIds as string[]) : [];
+  const trigger = await prisma.automationTrigger.findUnique({
+    where: { id: after.triggerId },
+    select: { segmentSpec: true },
+  });
+  const spec = trigger?.segmentSpec as { nickIds?: string[] } | null;
+  const triggerNickCount = Array.isArray(spec?.nickIds) ? spec!.nickIds!.length : 5;
+  if (failedArr.length >= triggerNickCount) {
     await prisma.customerListEntry.update({
       where: { id: input.entryId },
       data: { queueStatus: 'failed_permanent' },
     });
     logger.warn(
-      `[friend-invite] entry ${input.entryId} marked failed_permanent after 5 nicks failed (last reason: ${input.reason})`,
+      `[friend-invite] entry ${input.entryId} marked failed_permanent — all ${triggerNickCount} trigger nicks failed (last reason: ${input.reason})`,
     );
   }
 }
