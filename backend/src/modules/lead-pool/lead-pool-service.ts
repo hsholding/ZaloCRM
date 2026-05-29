@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
+import { logActivity } from '../activity/activity-logger.js';
 
 export type LeadSource = 'forgotten' | 'customer_list' | 'external_sync';
 export type ReleaseReason = 'completed' | 'auto_return' | 'manual_return';
@@ -264,6 +265,22 @@ export async function checkEligibility(orgId: string, userId: string): Promise<E
           where: { id: lastRequest.contactId, assignedUserId: fullLead.requestedByUserId },
           data: { assignedUserId: fullLead.previousAssigneeId },
         }).catch(() => { /* silent — contact có thể đã re-assigned */ });
+        // Phase v2.D 2026-05-29 — Timeline log "Auto-return lead vì sale không note quá hạn"
+        logActivity({
+          orgId,
+          systemSource: 'lead_pool_reaper',
+          action: 'lead_pool_auto_return',
+          entityType: 'contact',
+          entityId: lastRequest.contactId,
+          details: {
+            leadRequestId: lastRequest.id,
+            saleUserId: fullLead.requestedByUserId,
+            previousAssigneeId: fullLead.previousAssigneeId,
+            expiredAt: fullLead.expiresAt.toISOString(),
+            trigger: 'lazy_reaper',
+            reason: 'Sale không note quá hạn',
+          },
+        });
         // Fall through → eligibility OK (không return pending nữa)
       } else {
         return {
@@ -992,6 +1009,21 @@ export async function requestLead(args: { orgId: string; userId: string }) {
 
   logger.info(`[lead-pool] user=${args.userId} got lead contact=${result.contactId} source=${result.source} score=${result.priorityScore}`);
 
+  // Phase v2.D 2026-05-29 — Log timeline KH "Sale {tên} đã nhận lead từ pool".
+  logActivity({
+    orgId: args.orgId,
+    userId: args.userId,
+    action: 'lead_pool_assign',
+    entityType: 'contact',
+    entityId: result.contactId,
+    details: {
+      leadRequestId: result.leadRequestId,
+      source: result.source,
+      priorityScore: result.priorityScore,
+      expiresAt: expiresAt.toISOString(),
+    },
+  });
+
   return {
     leadRequestId: result.leadRequestId,
     source: result.source,
@@ -1191,6 +1223,7 @@ export async function returnLead(args: { userId: string; leadRequestId: string; 
   if (lr.requestedByUserId !== args.userId) throw new LeadPoolError(403, 'not_owner', 'Không phải lead của bạn');
   if (lr.releaseReason !== null) throw new LeadPoolError(400, 'already_released', 'Đã trả lại rồi');
 
+  const reasonText = (args.reason ?? '').trim();
   await prisma.$transaction(async (tx) => {
     // Conditional update — chỉ rollback nếu sale vẫn là current owner
     await tx.contact.updateMany({
@@ -1202,7 +1235,19 @@ export async function returnLead(args: { userId: string; leadRequestId: string; 
       data: {
         releaseReason: 'manual_return',
         noteSubmittedAt: lr.noteSubmittedAt ?? new Date(),
-        noteContent: lr.noteContent ?? (args.reason ?? 'Sale trả lại pool'),
+        noteContent: lr.noteContent ?? (reasonText || 'Sale trả lại pool'),
+      },
+    });
+    // Phase v2.D 2026-05-29 — Note "Sale trả lại pool: <lý do>" vào panel Ghi chú KH.
+    // Nếu lr.noteContent đã có (sale note xong rồi mới trả) → KHÔNG ghi đè, append note mới
+    // riêng để timeline hiển thị 2 dòng (note chăm + lý do trả).
+    await tx.note.create({
+      data: {
+        id: randomUUID(),
+        orgId: lr.contact.orgId,
+        contactId: lr.contactId,
+        authorUserId: args.userId,
+        body: `[Lead Pool] Trả lại pool: ${reasonText || '(không kèm lý do)'}`,
       },
     });
   });
@@ -1240,7 +1285,10 @@ export async function autoReturnExpiredLeads() {
       autoReturnedAt: null,
       expiresAt: { lt: now },
     },
-    select: { id: true, contactId: true, previousAssigneeId: true, requestedByUserId: true },
+    select: {
+      id: true, contactId: true, previousAssigneeId: true, requestedByUserId: true,
+      expiresAt: true, contact: { select: { orgId: true } },
+    },
   });
 
   // Codex HIGH-3 fix: chỉ rollback Contact.assignedUserId nếu CURRENT owner =
@@ -1260,6 +1308,22 @@ export async function autoReturnExpiredLeads() {
           noteContent: 'Sale không note quá hạn — auto trả về pool',
         },
       });
+    });
+    // Phase v2.D 2026-05-29 — Timeline log per contact
+    logActivity({
+      orgId: lr.contact.orgId,
+      systemSource: 'lead_pool_cron',
+      action: 'lead_pool_auto_return',
+      entityType: 'contact',
+      entityId: lr.contactId,
+      details: {
+        leadRequestId: lr.id,
+        saleUserId: lr.requestedByUserId,
+        previousAssigneeId: lr.previousAssigneeId,
+        expiredAt: lr.expiresAt.toISOString(),
+        trigger: 'cron_daily_2am',
+        reason: 'Sale không note quá hạn',
+      },
     });
   }
 
@@ -1367,6 +1431,23 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
       // Chỉ set globalId nếu KHÔNG trùng — tránh unique constraint crash
       zaloGlobalId: duplicateContact ? undefined : (extra.globalId ?? undefined),
       avatarUrl: extra.avatar ?? undefined,
+    },
+  });
+
+  // Phase v2.D 2026-05-29 — Log Zalo lookup vào timeline KH (manual via Tìm Zalo button)
+  logActivity({
+    orgId: args.orgId,
+    userId: args.userId,
+    action: 'lead_pool_zalo_lookup',
+    entityType: 'contact',
+    entityId: lr.contactId,
+    details: {
+      trigger: 'manual_find_zalo',
+      nickId: myNick.id,
+      nickName: myNick.displayName,
+      found: Boolean(foundUid),
+      hasGlobalId: Boolean(extra.globalId),
+      duplicateContactId: duplicateContact?.id ?? null,
     },
   });
 
@@ -2366,6 +2447,25 @@ export async function adminResetQuota(args: {
       reason: args.reason ?? null,
     },
     select: { id: true, bonusCount: true, dateKey: true, createdAt: true },
+  });
+
+  // Phase v2.D 2026-05-29 — Timeline log cho USER (sale nhận bonus) để dashboard
+  // hiển thị "lúc nào được cấp bonus, ai cấp, vì sao".
+  logActivity({
+    orgId: args.requester.orgId,
+    userId: args.requester.id,
+    action: 'lead_pool_bonus_grant',
+    entityType: 'user',
+    entityId: args.targetUserId,
+    details: {
+      bonusId: bonus.id,
+      bonusCount: args.bonusCount,
+      reviewerName,
+      reviewedLeadIds: newReviewIds,
+      reviewedCount: newReviewIds.length,
+      reason: args.reason ?? null,
+      dateKey: todayDateKeyVN(),
+    },
   });
 
   return { success: true, bonus, reviewedCount: newReviewIds.length, reviewerName };
