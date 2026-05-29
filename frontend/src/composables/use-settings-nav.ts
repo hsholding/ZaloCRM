@@ -83,6 +83,9 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'tags', label: 'Tag CRM', icon: '🏷', route: '/settings/crm/tags', permission: 'admin' },
       { id: 'zalo-labels', label: 'Tag Zalo native', icon: '⚑', route: '/settings/crm/zalo-labels', permission: 'admin', aliases: ['zalo label'] },
       { id: 'scoring', label: 'Lead scoring', icon: '📊', route: '/settings/crm/scoring', permission: 'admin', aliases: ['điểm', 'chấm điểm'] },
+      // Phase Lead Pool — bố trí menu 2026-05-29
+      { id: 'lead-pool', label: 'Nhận Lead', icon: '🎁', route: '/settings/crm/lead-pool', permission: 'admin', aliases: ['pool lead', 'lead pool', 'nhận lead', 'pool', 'quota', 'câu chào', 'greeting'] },
+      { id: 'lead-pool-queue', label: 'Queue chia Lead', icon: '🎯', route: '/settings/crm/lead-pool/queue', permission: 'admin', aliases: ['queue lead', 'preview pool', 'xem trước'] },
       { id: 'stuck', label: 'Stuck detection', icon: '⏸', route: '/settings/crm/stuck', permission: 'admin', comingSoon: true },
       { id: 'folders', label: 'Folder mặc định', icon: '📁', route: '/settings/crm/folders', permission: 'admin', comingSoon: true },
       { id: 'templates', label: 'Template tin nhắn', icon: '📝', route: '/settings/crm/templates', permission: 'admin', comingSoon: true },

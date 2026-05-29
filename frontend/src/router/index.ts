@@ -110,6 +110,9 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm/stuck',       name: 'Settings.Stuck',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'stuck' } },
       { path: 'crm/folders',     name: 'Settings.Folders',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'folders' } },
       { path: 'crm/templates',   name: 'Settings.Templates',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'templates' } },
+      // Phase Lead Pool 2026-05-24 — bố trí menu 2026-05-29
+      { path: 'crm/lead-pool',         name: 'Settings.LeadPool',        component: () => import('@/views/settings/LeadPoolConfigPage.vue') },
+      { path: 'crm/lead-pool/queue',   name: 'Settings.LeadPoolQueue',   component: () => import('@/views/settings/LeadPoolPreviewPage.vue') },
 
       // 🔌 Channels & Integrations
       { path: 'channels/zalo',             name: 'Settings.ZaloAccounts',    component: () => import('@/views/ZaloAccountsView.vue') },
