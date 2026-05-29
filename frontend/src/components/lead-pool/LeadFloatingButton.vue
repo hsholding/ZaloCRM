@@ -24,7 +24,17 @@
 
           <div class="lfb-tip-section">
             <div class="lfb-tip-section-title">Bạn hôm nay</div>
-            <div class="lfb-tip-row"><span>Còn lại</span><strong>{{ stats.my.remainingToday }} / {{ stats.config.maxPerDay }} lượt</strong></div>
+            <div class="lfb-tip-row" title="Quota cho phép: tối đa N lượt nhận lead / ngày (config admin set).">
+              <span>Quota còn</span><strong>{{ stats.my.remainingToday }} / {{ stats.config.maxPerDay }} lượt</strong>
+            </div>
+            <div class="lfb-tip-row" title="Số lead thực tế trong pool có thể xin (sau khi loại lead bạn đang giữ + sale khác đang chăm + cooldown).">
+              <span>Pool có sẵn</span><strong>{{ stats.poolAvailable }} lead</strong>
+            </div>
+            <div class="lfb-tip-row lfb-tip-row-highlight" title="Số lead thực sự nhận được = min(quota còn, pool sẵn)">
+              <span>→ Xin được tiếp</span>
+              <strong class="ok">{{ Math.min(stats.my.remainingToday, stats.poolAvailable) }} lead</strong>
+            </div>
+            <div class="lfb-tip-divider"></div>
             <div class="lfb-tip-row"><span>Đã nhận</span><strong>{{ stats.my.requestedToday }}</strong></div>
             <div class="lfb-tip-row"><span>Đã note</span><strong class="ok">{{ stats.my.noted }}</strong></div>
             <div v-if="stats.my.pending > 0" class="lfb-tip-row"><span>⚠ Chưa note</span><strong class="warn">{{ stats.my.pending }}</strong></div>
@@ -123,7 +133,13 @@
 
         <template v-else>
           <span class="lfb-text">Nhận Lead</span>
-          <span v-if="state.remainingToday !== undefined" class="lfb-badge">{{ state.remainingToday }}</span>
+          <!-- Badge = min(quota còn, pool sẵn) khi đã hover (stats loaded), fallback quota khi chưa.
+               Đồng bộ với tooltip "→ Xin được tiếp" để anh thấy 1 con số nhất quán. -->
+          <span
+            v-if="effectiveAvailable !== undefined"
+            class="lfb-badge"
+            :title="badgeTitle"
+          >{{ effectiveAvailable }}</span>
         </template>
       </button>
     </div>
@@ -381,6 +397,25 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+// 2026-05-29 — Badge button hiển thị số lead anh THỰC SỰ nhận được = min(quota còn, pool sẵn).
+// Khi chưa load stats (chưa hover tooltip) → fallback remainingToday (quota).
+// Khi load stats rồi → min(quota, pool).
+const effectiveAvailable = computed<number | undefined>(() => {
+  const quota = state.value.remainingToday;
+  if (quota === undefined) return undefined;
+  const pool = stats.value?.poolAvailable;
+  if (pool === undefined || pool === null) return quota;
+  return Math.min(quota, pool);
+});
+const badgeTitle = computed(() => {
+  const quota = state.value.remainingToday;
+  const pool = stats.value?.poolAvailable;
+  if (quota === undefined) return 'Số lead bạn xin được tiếp';
+  if (pool === undefined || pool === null) return `Còn ${quota} lượt quota hôm nay (chưa biết pool size)`;
+  if (pool < quota) return `Pool chỉ có ${pool} lead (quota còn ${quota} lượt) → nhận được ${pool}`;
+  return `Còn ${quota} lượt quota · pool có ${pool} lead`;
+});
+
 // 2026-05-29 — phân biệt 4 trạng thái lead trong tooltip FAB.
 // BE trả về h.status. Fallback derive nếu cũ.
 type LeadStatusKey = 'caring' | 'manual_return' | 'auto_return' | 'pending';
@@ -469,6 +504,9 @@ watch(() => route.path, (path) => {
 .lfb-tip-row strong { color: #0F172A; font-weight: 700; }
 .lfb-tip-row strong.ok { color: #047857; }
 .lfb-tip-row strong.warn { color: #B91C1C; }
+.lfb-tip-row-highlight { background: #ECFDF5; margin: 2px -4px; padding: 4px 6px; border-radius: 6px; border-left: 3px solid #10B981; }
+.lfb-tip-row-highlight span { color: #047857; font-weight: 600; }
+.lfb-tip-divider { height: 1px; background: #E5E7EB; margin: 4px 0; }
 .ok { color: #047857; }
 .warn { color: #B91C1C; }
 .muted { color: #94A3B8; }
