@@ -118,16 +118,36 @@ export async function leadPoolRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // GET /api/v1/lead-pool/preview — admin xem queue robin top N
+  // Query: ?limit=200 ?filter=available|assigned|cooldown|returned_today
   app.get(
     '/api/v1/lead-pool/preview',
     { preHandler: requireRole('owner', 'admin') },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const user = request.user!;
-      const query = request.query as { limit?: string };
-      const limit = query.limit ? parseInt(query.limit, 10) : 50;
+      const query = request.query as { limit?: string; filter?: string };
+      const limit = query.limit ? parseInt(query.limit, 10) : 200;
+      const validFilters = ['available', 'assigned', 'cooldown', 'returned_today'] as const;
+      const filter = (validFilters as readonly string[]).includes(query.filter ?? '')
+        ? (query.filter as typeof validFilters[number])
+        : 'available';
       try {
         const { previewPool } = await import('./lead-pool-service.js');
-        return await previewPool({ orgId: user.orgId, userId: user.id, limit });
+        return await previewPool({ orgId: user.orgId, userId: user.id, limit, filter });
+      } catch (err) {
+        return handle(err, reply);
+      }
+    },
+  );
+
+  // GET /api/v1/lead-pool/queue-today-stats — 4 KPI cho Queue Lead admin page
+  app.get(
+    '/api/v1/lead-pool/queue-today-stats',
+    { preHandler: requireRole('owner', 'admin') },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const user = request.user!;
+      try {
+        const { getQueueTodayStats } = await import('./lead-pool-service.js');
+        return await getQueueTodayStats({ orgId: user.orgId });
       } catch (err) {
         return handle(err, reply);
       }

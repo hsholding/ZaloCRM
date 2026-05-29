@@ -1399,6 +1399,81 @@ export async function findZaloForLead(args: { userId: string; orgId: string; lea
 }
 
 /**
+ * 4 KPI thống kê hôm nay — admin Queue Lead page.
+ * Phase v2.C 2026-05-29.
+ */
+export async function getQueueTodayStats(args: { orgId: string }) {
+  const config = await getOrCreateConfig(args.orgId);
+  const startToday = startOfTodayVN();
+  const cooldownCutoff = new Date(Date.now() - config.cooldownAfterNoteDays * 24 * 60 * 60 * 1000);
+
+  const [
+    poolSize,        // available leads (after cooldown filter)
+    assignedToday,   // pending lead requested today
+    assignedActive,  // tổng pending lead (any day, đang chờ note)
+    cooldownCount,   // lead khoá pool
+    returnedAutoToday,
+    returnedManualToday,
+    requestedToday,
+    notedToday,
+  ] = await Promise.all([
+    // pool size: candidate count (approximate) via forgotten query
+    prisma.$queryRawUnsafe<Array<{ cnt: number }>>(`
+      SELECT COUNT(*)::INTEGER AS cnt FROM contacts c
+      WHERE c.org_id = $1
+        AND COALESCE(c.last_inbound_at, c.created_at) < NOW() - ($2 || ' days')::INTERVAL
+        AND c.consent_status != 'revoked'
+        AND c.merged_into IS NULL
+        AND c.assigned_user_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_requests lr
+          WHERE lr.contact_id = c.id
+            AND lr.note_submitted_at IS NULL AND lr.release_reason IS NULL AND lr.auto_returned_at IS NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_requests lr2
+          WHERE lr2.contact_id = c.id
+            AND lr2.note_submitted_at IS NOT NULL
+            AND lr2.note_submitted_at > NOW() - ($3 || ' days')::INTERVAL
+            AND lr2.release_reason IS NULL
+        )
+    `, args.orgId, String(config.forgottenThresholdDays), String(config.cooldownAfterNoteDays)).then((r) => Number(r[0]?.cnt ?? 0)),
+
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, noteSubmittedAt: null, releaseReason: null, autoReturnedAt: null, requestedAt: { gte: startToday } },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, noteSubmittedAt: null, releaseReason: null, autoReturnedAt: null },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, noteSubmittedAt: { not: null, gt: cooldownCutoff }, releaseReason: null },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, releaseReason: 'auto_return', autoReturnedAt: { gte: startToday } },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, releaseReason: 'manual_return', noteSubmittedAt: { gte: startToday } },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, requestedAt: { gte: startToday } },
+    }),
+    prisma.leadRequest.count({
+      where: { contact: { orgId: args.orgId }, noteSubmittedAt: { gte: startToday }, releaseReason: null },
+    }),
+  ]);
+
+  const notedPct = requestedToday > 0 ? Math.round((notedToday / requestedToday) * 100) : 0;
+  return {
+    poolSize,
+    assigned: { today: assignedToday, totalActive: assignedActive },
+    cooldown: cooldownCount,
+    returnedToday: { auto: returnedAutoToday, manual: returnedManualToday, total: returnedAutoToday + returnedManualToday },
+    today: { requested: requestedToday, noted: notedToday, pct: notedPct },
+    config: { cooldownAfterNoteDays: config.cooldownAfterNoteDays, forgottenThresholdDays: config.forgottenThresholdDays },
+  };
+}
+
+/**
  * Stats theo role cho tooltip:
  *   - sale (member): quota còn lại + lịch sử lead hôm nay của chính sale + size pool
  *   - leader (deptRole='leader'/'deputy'): + summary leads team mình quản lý
@@ -1575,12 +1650,26 @@ export async function getLeadPoolStats(args: { orgId: string; userId: string; ro
 /**
  * Preview top N candidate đang trong pool — admin/owner xem queue robin.
  * KHÔNG lock, KHÔNG mutate. Pure read.
+ * Phase v2.C 2026-05-29 — filter tabs: 'available' | 'assigned' | 'cooldown' | 'returned_today'
  */
-export async function previewPool(args: { orgId: string; userId: string; limit?: number }) {
-  const config = await getOrCreateConfig(args.orgId);
-  const limit = Math.min(args.limit ?? 50, 200);
+export type PreviewFilter = 'available' | 'assigned' | 'cooldown' | 'returned_today';
 
-  // Lấy top candidate forgotten + customer_list (KHÔNG random, sort thuần theo score)
+export async function previewPool(args: {
+  orgId: string;
+  userId: string;
+  limit?: number;
+  filter?: PreviewFilter;
+}) {
+  const config = await getOrCreateConfig(args.orgId);
+  const limit = Math.min(args.limit ?? 200, 500);
+  const filter: PreviewFilter = args.filter ?? 'available';
+
+  // 4 tab — chạy 4 query khác nhau
+  if (filter === 'assigned') return await previewAssignedToday(args.orgId, config, limit);
+  if (filter === 'cooldown') return await previewCooldown(args.orgId, config, limit);
+  if (filter === 'returned_today') return await previewReturnedToday(args.orgId, config, limit);
+
+  // Default: available — top N candidate sẵn sàng chia
   const [forgottenList, customerListList] = await Promise.all([
     config.enabledSources.includes('forgotten')
       ? queryForgottenCandidates(args.orgId, args.userId, config, limit)
@@ -1591,62 +1680,246 @@ export async function previewPool(args: { orgId: string; userId: string; limit?:
   ]);
 
   const merged = [...forgottenList, ...customerListList].sort((a, b) => b.priorityScore - a.priorityScore).slice(0, limit);
-
-  // Enrich từng candidate với Contact info để render UI
-  if (merged.length === 0) {
-    return { items: [], total: 0, config: { forgottenThresholdDays: config.forgottenThresholdDays, autoReturnAfterMinutes: config.autoReturnAfterMinutes, requirePhoneInPool: config.requirePhoneInPool } };
-  }
-
-  const contactIds = merged.map((m) => m.contactId);
-  const contacts = await prisma.contact.findMany({
-    where: { id: { in: contactIds } },
-    select: {
-      id: true,
-      fullName: true,
-      crmName: true,
-      phone: true,
-      phoneNormalized: true,
-      hasZalo: true,
-      status: true,
-      lastActivity: true,
-      assignedUser: { select: { id: true, fullName: true, email: true } },
-      statusRef: { select: { name: true, color: true } },
-      _count: { select: { friends: { where: { friendshipStatus: 'accepted' } }, contactNotes: true } },
-    },
-  });
-  const cMap = Object.fromEntries(contacts.map((c) => [c.id, c]));
-
-  const items = merged.map((m) => {
-    const c = cMap[m.contactId];
-    if (!c) return null;
-    const daysIdle = c.lastActivity ? Math.floor((Date.now() - c.lastActivity.getTime()) / 86400000) : null;
-    return {
-      contactId: c.id,
-      priorityScore: m.priorityScore,
-      source: m.source,
-      name: c.crmName || c.fullName || c.phone || 'KH chưa đặt tên',
-      phone: c.phone,
-      hasPhone: !!c.phoneNormalized,
-      hasZalo: c.hasZalo,
-      acceptedNickCount: c._count.friends,
-      noteCount: c._count.contactNotes,
-      status: c.statusRef?.name ?? c.status,
-      statusColor: c.statusRef?.color,
-      daysIdle,
-      lastActivity: c.lastActivity,
-      previousAssignee: c.assignedUser ? { id: c.assignedUser.id, fullName: c.assignedUser.fullName } : null,
-    };
-  }).filter(Boolean);
+  const items = await enrichItems(merged, 'available');
 
   return {
-    items,
-    total: items.length,
+    items, total: items.length, filter: 'available' as const,
     config: {
       forgottenThresholdDays: config.forgottenThresholdDays,
       autoReturnAfterMinutes: config.autoReturnAfterMinutes,
       requirePhoneInPool: config.requirePhoneInPool,
+      cooldownAfterNoteDays: config.cooldownAfterNoteDays,
     },
   };
+}
+
+/**
+ * Tab "Đang chia" — lead pending (chưa note, chưa release) — bất kỳ sale nào trong org.
+ */
+async function previewAssignedToday(orgId: string, config: PoolConfig, limit: number) {
+  const rows = await prisma.leadRequest.findMany({
+    where: {
+      contact: { orgId },
+      noteSubmittedAt: null,
+      releaseReason: null,
+      autoReturnedAt: null,
+    },
+    orderBy: { requestedAt: 'desc' },
+    take: limit,
+    select: { contactId: true, priorityScore: true, source: true },
+  });
+  const candidates: PriorityCandidate[] = rows.map((r) => ({
+    contactId: r.contactId, source: r.source as LeadSource, priorityScore: r.priorityScore,
+  }));
+  const items = await enrichItems(candidates, 'assigned');
+  return {
+    items, total: items.length, filter: 'assigned' as const,
+    config: {
+      forgottenThresholdDays: config.forgottenThresholdDays,
+      autoReturnAfterMinutes: config.autoReturnAfterMinutes,
+      requirePhoneInPool: config.requirePhoneInPool,
+      cooldownAfterNoteDays: config.cooldownAfterNoteDays,
+    },
+  };
+}
+
+/**
+ * Tab "Khoá cooldown" — lead đã note < cooldownAfterNoteDays + chưa release.
+ */
+async function previewCooldown(orgId: string, config: PoolConfig, limit: number) {
+  const cutoff = new Date(Date.now() - config.cooldownAfterNoteDays * 24 * 60 * 60 * 1000);
+  const rows = await prisma.leadRequest.findMany({
+    where: {
+      contact: { orgId },
+      noteSubmittedAt: { not: null, gt: cutoff },
+      releaseReason: null,
+    },
+    orderBy: { noteSubmittedAt: 'desc' },
+    take: limit,
+    select: { contactId: true, priorityScore: true, source: true },
+  });
+  const candidates: PriorityCandidate[] = rows.map((r) => ({
+    contactId: r.contactId, source: r.source as LeadSource, priorityScore: r.priorityScore,
+  }));
+  const items = await enrichItems(candidates, 'cooldown');
+  return {
+    items, total: items.length, filter: 'cooldown' as const,
+    config: {
+      forgottenThresholdDays: config.forgottenThresholdDays,
+      autoReturnAfterMinutes: config.autoReturnAfterMinutes,
+      requirePhoneInPool: config.requirePhoneInPool,
+      cooldownAfterNoteDays: config.cooldownAfterNoteDays,
+    },
+  };
+}
+
+/**
+ * Tab "Trả về hôm nay" — lead có releaseReason set trong ngày VN.
+ */
+async function previewReturnedToday(orgId: string, config: PoolConfig, limit: number) {
+  const startToday = startOfTodayVN();
+  const rows = await prisma.leadRequest.findMany({
+    where: {
+      contact: { orgId },
+      releaseReason: { not: null },
+      OR: [
+        { autoReturnedAt: { gte: startToday } },
+        { AND: [{ autoReturnedAt: null }, { noteSubmittedAt: { gte: startToday } }] },
+      ],
+    },
+    orderBy: [{ autoReturnedAt: 'desc' }, { noteSubmittedAt: 'desc' }],
+    take: limit,
+    select: { contactId: true, priorityScore: true, source: true },
+  });
+  const candidates: PriorityCandidate[] = rows.map((r) => ({
+    contactId: r.contactId, source: r.source as LeadSource, priorityScore: r.priorityScore,
+  }));
+  const items = await enrichItems(candidates, 'returned');
+  return {
+    items, total: items.length, filter: 'returned_today' as const,
+    config: {
+      forgottenThresholdDays: config.forgottenThresholdDays,
+      autoReturnAfterMinutes: config.autoReturnAfterMinutes,
+      requirePhoneInPool: config.requirePhoneInPool,
+      cooldownAfterNoteDays: config.cooldownAfterNoteDays,
+    },
+  };
+}
+
+/**
+ * Shared enrich — load Contact + latest LeadRequest + latest Note + tên CustomerList.
+ */
+async function enrichItems(
+  candidates: PriorityCandidate[],
+  rowKind: 'available' | 'assigned' | 'cooldown' | 'returned',
+) {
+  if (candidates.length === 0) return [];
+  const contactIds = candidates.map((c) => c.contactId);
+
+  const [contacts, latestLeadRequests, latestNotes, customerListEntries] = await Promise.all([
+    prisma.contact.findMany({
+      where: { id: { in: contactIds } },
+      select: {
+        id: true, fullName: true, crmName: true, phone: true, phoneNormalized: true,
+        hasZalo: true, status: true, lastActivity: true, lastInboundAt: true,
+        province: true, district: true, ward: true, avatarUrl: true,
+        assignedUser: { select: { id: true, fullName: true } },
+        statusRef: { select: { name: true, color: true } },
+      },
+    }),
+    // Latest LeadRequest cho mỗi contact — currentSale + status info
+    prisma.leadRequest.findMany({
+      where: { contactId: { in: contactIds } },
+      orderBy: { requestedAt: 'desc' },
+      select: {
+        id: true, contactId: true, requestedAt: true, noteSubmittedAt: true,
+        releaseReason: true, autoReturnedAt: true, noteContent: true, expiresAt: true,
+        user: { select: { id: true, fullName: true } },
+      },
+    }),
+    // Latest Note cho mỗi contact
+    prisma.note.findMany({
+      where: { contactId: { in: contactIds } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, contactId: true, body: true, createdAt: true,
+        author: { select: { fullName: true } },
+      },
+    }),
+    // CustomerList name nếu source=customer_list
+    prisma.customerListEntry.findMany({
+      where: { contactId: { in: contactIds } },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        contactId: true,
+        customerList: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  // Map first LeadRequest + first Note + first CustomerList per contact (ordered desc → first = latest)
+  const cMap = Object.fromEntries(contacts.map((c) => [c.id, c]));
+  const lrMap = new Map<string, typeof latestLeadRequests[number]>();
+  for (const lr of latestLeadRequests) if (!lrMap.has(lr.contactId)) lrMap.set(lr.contactId, lr);
+  const noteMap = new Map<string, typeof latestNotes[number]>();
+  for (const n of latestNotes) if (!noteMap.has(n.contactId)) noteMap.set(n.contactId, n);
+  const listMap = new Map<string, string>();
+  for (const e of customerListEntries) {
+    if (!e.contactId) continue;
+    if (!listMap.has(e.contactId)) listMap.set(e.contactId, e.customerList?.name ?? '');
+  }
+
+  return candidates.map((cand) => {
+    const c = cMap[cand.contactId];
+    if (!c) return null;
+    const lr = lrMap.get(cand.contactId);
+    const note = noteMap.get(cand.contactId);
+    const listName = listMap.get(cand.contactId);
+
+    // Derive trạng thái:
+    let status: 'new' | 'assigned' | 'cooldown' | 'returned_manual' | 'returned_auto' = 'new';
+    let statusTime: string | null = null;
+    if (lr) {
+      if (lr.releaseReason === 'auto_return' || lr.autoReturnedAt) {
+        status = 'returned_auto';
+        statusTime = (lr.autoReturnedAt ?? lr.noteSubmittedAt)?.toISOString() ?? null;
+      } else if (lr.releaseReason === 'manual_return') {
+        status = 'returned_manual';
+        statusTime = lr.noteSubmittedAt?.toISOString() ?? null;
+      } else if (lr.noteSubmittedAt) {
+        status = 'cooldown';
+        statusTime = lr.noteSubmittedAt.toISOString();
+      } else {
+        status = 'assigned';
+        statusTime = lr.expiresAt?.toISOString() ?? null;
+      }
+    }
+
+    // Note type derive
+    let noteType: 'note' | 'return' | 'auto' | 'contact' | null = null;
+    let noteText: string | null = null;
+    let noteAuthor: string | null = null;
+    let noteTime: string | null = null;
+    if (lr && (lr.releaseReason === 'manual_return' || lr.releaseReason === 'auto_return')) {
+      noteType = lr.releaseReason === 'auto_return' ? 'auto' : 'return';
+      noteText = lr.noteContent ?? '';
+      noteAuthor = lr.user?.fullName ?? null;
+      noteTime = (lr.autoReturnedAt ?? lr.noteSubmittedAt)?.toISOString() ?? null;
+    } else if (note) {
+      noteType = 'note';
+      noteText = note.body.replace(/^\[Lead Pool\] /, '');
+      noteAuthor = note.author?.fullName ?? null;
+      noteTime = note.createdAt.toISOString();
+    }
+
+    const idleAnchor = c.lastInboundAt ?? c.lastActivity;
+    const daysIdle = idleAnchor ? Math.floor((Date.now() - idleAnchor.getTime()) / 86400000) : null;
+
+    return {
+      contactId: c.id,
+      priorityScore: cand.priorityScore,
+      source: cand.source,
+      customerListName: listName ?? null,
+      name: c.crmName || c.fullName || c.phone || 'KH chưa đặt tên',
+      avatarUrl: c.avatarUrl,
+      phone: c.phone,
+      hasPhone: !!c.phoneNormalized,
+      hasZalo: c.hasZalo,
+      addressLine: [c.ward, c.district, c.province].filter(Boolean).join(', '),
+      contactStatus: c.statusRef?.name ?? c.status,
+      contactStatusColor: c.statusRef?.color,
+      status,                 // new | assigned | cooldown | returned_manual | returned_auto
+      statusTime,             // expiresAt / noteSubmittedAt / autoReturnedAt
+      currentSale: lr?.user
+        ? { id: lr.user.id, fullName: lr.user.fullName }
+        : null,
+      latestNote: noteType ? { type: noteType, text: noteText, author: noteAuthor, time: noteTime } : null,
+      daysIdle,
+      lastInboundAt: c.lastInboundAt,
+      previousAssignee: c.assignedUser ? { id: c.assignedUser.id, fullName: c.assignedUser.fullName } : null,
+      rowKind,
+    };
+  }).filter(Boolean);
 }
 
 // Variant non-tx của queryCustomerListCandidates cho preview (không tạo stub).
