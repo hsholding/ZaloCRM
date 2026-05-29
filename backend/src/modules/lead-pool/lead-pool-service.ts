@@ -578,6 +578,8 @@ async function buildLeadPayload(
           id: true,
           zaloAccountId: true,
           zaloUidInNick: true,
+          zaloDisplayName: true,
+          zaloAvatarUrl: true,
           friendshipStatus: true,
           relationshipKind: true,
           becameFriendAt: true,
@@ -659,7 +661,10 @@ async function buildLeadPayload(
       totalMessages: contact.totalInbound + contact.totalOutbound,
       hadHotMoment: false,
     },
-    suggestedOpenings: buildSuggestedOpenings(contact, saleFullName, lookupGender, greetingTemplates),
+    suggestedOpenings: buildSuggestedOpenings(
+      contact, saleFullName, lookupGender, greetingTemplates,
+      autoLookup?.zaloProfile?.zaloName ?? friendsByCurrentSale[0]?.zaloDisplayName ?? null,
+    ),
   };
 }
 
@@ -692,8 +697,11 @@ function buildSuggestedOpenings(
   saleFullName: string | null,
   gender: number | null = null,
   templates: string[] = [],
+  zaloName: string | null = null,
 ): string[] {
-  const contactName = vietnameseFirstName(contact.crmName ?? contact.fullName);
+  // 2026-05-29 anh báo: KH chỉ có Zalo name (Huongntt) không có crmName/fullName →
+  // câu chào fallback "anh/chị" thiếu tên. Fix: priority crmName > fullName > zaloName.
+  const contactName = vietnameseFirstName(contact.crmName ?? contact.fullName ?? zaloName);
   const sale = vietnameseFirstName(saleFullName);
   // Personalize gender: 0=Nam → "Anh", 1=Nữ → "Chị", null → "Anh/Chị" + "anh/chị".
   let anh_chi: string;

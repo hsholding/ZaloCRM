@@ -527,9 +527,14 @@ const recentNicksFiltered = computed(() => {
 
 const noteMinLength = computed(() => eligibility.value?.config.noteMinLength ?? 20);
 
+// 2026-05-29 anh báo: KH 0979393638 hiện phone thay vì 'Huongntt' (zaloName).
+// Fix priority chain: sale tự đặt > Contact > Zalo profile (auto-lookup hoặc Friend) > phone.
 const displayName = computed(() => {
   const c = props.lead?.contact;
-  return c?.crmName || c?.fullName || c?.phone || 'KH chưa đặt tên';
+  const lead = props.lead as any;
+  const fromAutoLookup = lead?.autoLookup?.zaloProfile?.zaloName;
+  const fromFriend = lead?.friendsByCurrentSale?.[0]?.zaloDisplayName;
+  return c?.crmName || c?.fullName || fromAutoLookup || fromFriend || c?.phone || 'KH chưa đặt tên';
 });
 
 const initials = computed(() => {
