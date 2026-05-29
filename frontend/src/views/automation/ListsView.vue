@@ -384,6 +384,7 @@ function avatarStyle(name: string): Record<string, string> {
   const [c1, c2] = GRADIENTS[hashIdx(name || '?', GRADIENTS.length)];
   return { background: `linear-gradient(135deg, ${c1}, ${c2})` };
 }
+void initials; void avatarStyle; // legacy helpers kept for ref after table refactor
 </script>
 
 <style scoped>

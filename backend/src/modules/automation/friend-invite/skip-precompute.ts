@@ -75,45 +75,28 @@ export async function precomputeAndSeedPool(input: {
   const entryStatusList =
     entryStatuses.length > 0 ? entryStatuses.map((s) => `'${s.replace(/'/g, "''")}'`).join(',') : "''";
 
-  // Use raw SQL because CASE expression across multiple LEFT JOINs + filters
-  // is awkward in Prisma. Scoped tới THIS trigger only.
+  // Fix 2026-05-29: scalar subqueries trong CASE thay vì LEFT JOIN cross product
+  // (cross product không match entries thiếu Friend/Conversation → bỏ sót entries).
   const rawUpdateResult = await prisma.$executeRawUnsafe(
     `
-    WITH this_trigger_contacts AS (
-      SELECT contact_id FROM customer_list_entries
-      WHERE trigger_id = $1 AND contact_id IS NOT NULL
-    ),
-    friend_count AS (
-      SELECT f.contact_id, COUNT(*) AS cnt
-      FROM friends f
-      JOIN this_trigger_contacts t ON t.contact_id = f.contact_id
-      WHERE f.org_id = $2
-      GROUP BY f.contact_id
-    ),
-    last_chat AS (
-      SELECT c.contact_id, MAX(m.sent_at) AS last_at
-      FROM conversations c
-      JOIN this_trigger_contacts t ON t.contact_id = c.contact_id
-      JOIN messages m ON m.conversation_id = c.id
-      WHERE c.org_id = $2
-        AND m.sent_at > NOW() - INTERVAL '${Math.max(recencyDays, 30)} days'
-      GROUP BY c.contact_id
-    )
     UPDATE customer_list_entries e
     SET queue_status = CASE
       WHEN e.has_zalo = false THEN 'skipped_no_zalo'
-      WHEN e.has_zalo IS NULL THEN 'queued_for_pickup'
-      WHEN fc.cnt > $3 THEN 'skipped_friend_cap'
-      WHEN lc.last_at > NOW() - INTERVAL '${recencyDays} days' THEN 'skipped_recency'
+      WHEN COALESCE((
+        SELECT COUNT(*) FROM friends f
+        WHERE f.org_id = $2 AND f.contact_id = e.contact_id
+      ), 0) > $3 THEN 'skipped_friend_cap'
+      WHEN COALESCE((
+        SELECT MAX(m.sent_at)
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE c.org_id = $2 AND c.contact_id = e.contact_id
+          AND m.sent_at > NOW() - INTERVAL '${Math.max(recencyDays, 30)} days'
+      ), TIMESTAMP 'epoch') > NOW() - INTERVAL '${recencyDays} days' THEN 'skipped_recency'
       WHEN e.status IN (${entryStatusList}) THEN 'skipped_status'
       ELSE 'queued_for_pickup'
     END
-    FROM (SELECT 1) dummy
-    LEFT JOIN friend_count fc ON true
-    LEFT JOIN last_chat lc ON true
     WHERE e.trigger_id = $1
-      AND (fc.contact_id IS NULL OR fc.contact_id = e.contact_id)
-      AND (lc.contact_id IS NULL OR lc.contact_id = e.contact_id)
     `,
     triggerId,
     orgId,

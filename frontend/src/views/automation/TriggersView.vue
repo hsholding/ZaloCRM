@@ -118,6 +118,8 @@
           v-for="trig in configured"
           :key="trig.id"
           class="configured-row"
+          :class="{ 'is-clickable': trig.eventType === 'friend_invite_to_list' }"
+          @click="trig.eventType === 'friend_invite_to_list' && router.push(`/marketing/triggers/${trig.id}`)"
         >
           <div class="cell-trig">
             <div
@@ -275,7 +277,9 @@ import type {
   TriggerEventType, TriggerBindingKind, TriggerCategory,
 } from '@/api/automation/types';
 import { CATEGORY_COLOR, iconForEvent } from '@/components/automation/phase7/design-tokens';
+import { useRouter } from 'vue-router';
 
+const router = useRouter();
 const tab = ref<'configured' | 'catalog'>('configured');
 const catalog = ref<TriggerCatalogEntry[]>([]);
 const configured = ref<AutomationTrigger[]>([]);
@@ -367,6 +371,11 @@ async function loadAll() {
 onMounted(loadAll);
 
 function openCreateFromCatalog(entry: TriggerCatalogEntry) {
+  // Phase Friend Invite 2026-05-28 — dedicated full-page form cho friend_invite_to_list
+  if (entry.eventType === 'friend_invite_to_list') {
+    void router.push('/marketing/triggers/new/friend-invite');
+    return;
+  }
   draft.value = {
     id: null,
     name: entry.title,

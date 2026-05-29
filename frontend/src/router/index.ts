@@ -173,7 +173,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     redirect: '/marketing/triggers',
     children: [
-      { path: 'triggers',   name: 'Marketing.Triggers',   component: () => import('@/views/automation/TriggersView.vue') },
+      { path: 'triggers',                   name: 'Marketing.Triggers',           component: () => import('@/views/automation/TriggersView.vue') },
+      { path: 'triggers/new/friend-invite', name: 'Marketing.FriendInviteCreate', component: () => import('@/views/automation/FriendInviteCreateView.vue') },
+      { path: 'triggers/:id',               name: 'Marketing.TriggerDetail',      component: () => import('@/views/automation/TriggerDetailView.vue') },
       { path: 'blocks',     name: 'Marketing.Blocks',     component: () => import('@/views/automation/BlocksView.vue') },
       { path: 'sequences',  name: 'Marketing.Sequences',  component: () => import('@/views/automation/SequencesView.vue') },
       { path: 'broadcasts', name: 'Marketing.Broadcasts', component: () => import('@/views/automation/BroadcastsView.vue') },

@@ -350,6 +350,7 @@ function rawAcc(slotProps: { item: { raw?: AccountLite } | AccountLite }): Accou
   const item = slotProps.item as any;
   return (item?.raw ?? item) as AccountLite;
 }
+void rawAcc; // legacy helper kept for ref but unused after refactor
 const accountTitle = computed(() => selectedAccount.value?.displayName || 'nick');
 
 const selectedAccountId = ref<string | null>(props.defaultAccountId ?? null);

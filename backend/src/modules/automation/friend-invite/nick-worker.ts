@@ -290,6 +290,25 @@ async function runTick(nickId: string): Promise<void> {
     } catch (err: any) {
       const code = err?.code ?? '';
       const msg = err?.message ?? String(err);
+
+      // Detect "already friend" — KH đã là bạn của nick này. Coi như success
+      // (no friend request needed) → mark processed + insert Outbox for sequence.
+      if (msg.includes('đã là bạn') || msg.includes('already friend') || code === 'ALREADY_FRIEND') {
+        logger.info(`[nick-worker] ${nickId} entry=${entry.id} already friend → mark processed`);
+        await markEntrySent({
+          entryId: entry.id,
+          triggerId: entry.triggerId,
+          nickId,
+          contactId: entry.contactId ?? entry.id,
+          successorSequenceId: trigger.successorSequenceId,
+          sequenceSnapshot: null,
+          zaloLeadgenId: 'already_friend',
+          isTentative: false,
+        });
+        worker.todayCount++;
+        return;
+      }
+
       // Distinguish RATE_LIMITED (retry) vs hard error (release pool)
       if (code === 'RATE_LIMITED' || code === 'NOT_CONNECTED' || msg.includes('timeout')) {
         // Soft fail — release pool, nick có thể retry sau, KHÔNG append failedNickIds
