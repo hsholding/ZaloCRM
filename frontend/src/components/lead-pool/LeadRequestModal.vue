@@ -626,15 +626,44 @@ const genderLabel = computed(() => {
   return '';
 });
 
+// 2026-05-29 fix anh báo: KH Mira Nguyễn có dob = -18082800 (Unix timestamp giây,
+// số âm vì sinh trước 1970). Code cũ check d > 0 → fallback raw '-18082800'.
+// Zalo SDK dob có thể là:
+//   - Unix timestamp giây (kể cả âm cho người sinh trước 1970)
+//   - Unix timestamp ms (số rất lớn > 1e12)
+//   - ISO string '1985-06-04'
+//   - Format YYYYMMDD số (vd 19850604)
 const dobLabel = computed(() => {
   const d = zaloProfile.value?.dob;
-  if (!d) return '';
-  if (typeof d === 'number' && d > 0) {
-    const date = new Date(d > 1e12 ? d : d * 1000);
-    return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+  if (d === null || d === undefined || d === '') return '';
+  // ISO string format
+  if (typeof d === 'string') {
+    const parsed = new Date(d);
+    if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1900) {
+      return formatDob(parsed);
+    }
+    return d; // raw string fallback
+  }
+  if (typeof d === 'number') {
+    // Format YYYYMMDD (vd 19850604)
+    if (d >= 19000101 && d <= 21000101) {
+      const yyyy = Math.floor(d / 10000);
+      const mm = Math.floor((d % 10000) / 100);
+      const dd = d % 100;
+      return `${String(dd).padStart(2, '0')}/${String(mm).padStart(2, '0')}/${yyyy}`;
+    }
+    // Unix timestamp giây hoặc ms (kể cả âm)
+    const ms = Math.abs(d) > 1e12 ? d : d * 1000;
+    const date = new Date(ms);
+    if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
+      return formatDob(date);
+    }
   }
   return String(d);
 });
+function formatDob(date: Date): string {
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
+}
 
 function formatPhone(p: string | null | undefined) {
   if (!p) return '';
