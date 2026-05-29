@@ -201,13 +201,36 @@ function mergeContactPreserveDetail<T extends { id?: string } | null | undefined
   return { ...existing, ...incoming } as T;
 }
 
-function mergeConvListPreserveDetail(existing: Conversation[], incoming: Conversation[]): Conversation[] {
+/**
+ * Merge list incoming (fresh fetch) với existing (state hiện tại):
+ * - Conv có trong incoming: lấy fresh + preserve contact detail
+ * - Conv có trong existing nhưng KHÔNG trong incoming + nằm trong preserveIds
+ *   (vd conv stub từ Lead Pool đang được select, lastMessageAt=null không vào
+ *   top 100 fresh) → giữ lại + APPEND vào CUỐI (vì lastMessageAt=null thuộc cuối).
+ *   Fix 2026-05-29: trước đây stub bị wipe → UI clear trắng khi fetchConversations rerun.
+ */
+function mergeConvListPreserveDetail(
+  existing: Conversation[],
+  incoming: Conversation[],
+  preserveIds?: Set<string>,
+): Conversation[] {
   const existingMap = new Map(existing.map(c => [c.id, c]));
-  return incoming.map(c => {
+  const incomingIds = new Set(incoming.map(c => c.id));
+  const merged: Conversation[] = incoming.map(c => {
     const prev = existingMap.get(c.id);
     if (!prev) return c;
     return { ...c, contact: mergeContactPreserveDetail(prev.contact, c.contact) };
   });
+  // Preserve stub/selected conv that didn't make incoming list
+  if (preserveIds && preserveIds.size > 0) {
+    for (const id of preserveIds) {
+      if (!incomingIds.has(id)) {
+        const stub = existingMap.get(id);
+        if (stub) merged.push(stub); // append cuối — lastMessageAt=null sort cuối tự nhiên
+      }
+    }
+  }
+  return merged;
 }
 
 export function useChat() {
@@ -286,9 +309,13 @@ export function useChat() {
     // bypassCache=true cho socket-triggered refresh (scheduleConvSync sau khi
     // socket optimistic move conv lên top). Lý do: nếu apply cache cũ sẽ ghi đè
     // state đã được socket update → conv "tụt xuống xíu rồi nhảy lên top" flicker.
+    // Fix 2026-05-29: preserve conv đang được select (vd stub từ Lead Pool,
+    // lastMessageAt=null không vào top 100 → bị wipe → UI blank).
+    const preserveIds = selectedConvId.value ? new Set([selectedConvId.value]) : undefined;
+
     if (cached) {
       logCacheEvent('hit', cacheKey);
-      conversations.value = mergeConvListPreserveDetail(conversations.value, cached.data);
+      conversations.value = mergeConvListPreserveDetail(conversations.value, cached.data, preserveIds);
     } else {
       if (!opts?.bypassCache) logCacheEvent('miss', cacheKey);
       // Spinner chỉ hiện khi state thực sự rỗng (first load). bypassCache khi
@@ -306,7 +333,7 @@ export function useChat() {
       evictOldConvCacheIfNeeded();
       // Merge để giữ detail fields (Contact full ~50 field từ /conversations/:id)
       // không bị wipe bởi narrow list response (14 field).
-      conversations.value = mergeConvListPreserveDetail(conversations.value, fresh);
+      conversations.value = mergeConvListPreserveDetail(conversations.value, fresh, preserveIds);
     } catch (err) {
       console.error('Failed to fetch conversations:', err);
     } finally {
@@ -508,9 +535,10 @@ export function useChat() {
       let conv = conversations.value.find(c => c.id === convId);
       if (!conv) {
         // 2026-05-28: Conv stub từ Lead Pool có thể không nằm trong 100 conv top
-        // (lastMessageAt=null, sort sau hết). Push detail vào list để MessageThread
-        // render được — selectedConv computed find sẽ resolve.
-        conversations.value = [convDetail.data, ...conversations.value];
+        // (lastMessageAt=null, sort sau hết). Push detail vào CUỐI list (không gim top —
+        // fix 2026-05-29: trước đây unshift gim top, sau khi gửi tin nhắn đầu BE update
+        // lastMessageAt → conv tự nhảy lên top theo sort tự nhiên).
+        conversations.value = [...conversations.value, convDetail.data];
         conv = convDetail.data;
       } else {
         if (convDetail.data.contact) conv.contact = convDetail.data.contact;
