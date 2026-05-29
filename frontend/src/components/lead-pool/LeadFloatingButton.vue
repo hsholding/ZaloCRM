@@ -467,11 +467,19 @@ watch(() => route.path, (path) => {
 .lfb-tooltip-rich {
   background: white; border: 1px solid #E5E7EB; border-radius: 12px;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
-  width: 320px; max-height: 60vh; overflow-y: auto;
+  width: 320px; max-height: 70vh;
+  overflow-y: auto; /* Fix 2026-05-29: scroll dọc khi content dài (admin có team+org section) */
   font-size: 12.5px; color: #0F172A;
   animation: lfb-tip-in 0.15s ease-out;
-  overflow: hidden; /* để header gradient không lòi qua border-radius */
+  /* overflow:hidden BỎ — gây không scroll. Header gradient sẽ tự fit nhờ overflow-y: auto clip Y */
 }
+/* Custom scrollbar slim — không chiếm chỗ */
+.lfb-tooltip-rich::-webkit-scrollbar { width: 6px; }
+.lfb-tooltip-rich::-webkit-scrollbar-track { background: transparent; }
+.lfb-tooltip-rich::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+.lfb-tooltip-rich::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+/* Header phải có border-radius top để khớp wrapper khi scroll */
+.lfb-tip-head { border-radius: 12px 12px 0 0; }
 @keyframes lfb-tip-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
