@@ -14,9 +14,9 @@
         <template v-else>
           <div class="lfb-tip-head">
             <div class="lfb-tip-head-main">
-              <span class="lfb-tip-title">🎁 Pool Lead</span>
-              <span class="lfb-tip-subtitle" :title="'Lead bạn có thể bấm Nhận Lead để xin tiếp. Đã loại bỏ lead bạn đang giữ + lead sale khác đang chăm + lead trong cooldown.'">
-                <strong>{{ stats.poolAvailable }}</strong> lead bạn có thể xin
+              <span class="lfb-tip-title">🎁 Nhận khách</span>
+              <span class="lfb-tip-subtitle" :title="'Số khách bạn có thể bấm Nhận khách để xin tiếp. Đã trừ khách bạn đang giữ + sale khác đang chăm + khách đang khoá.'">
+                <strong>{{ stats.poolAvailable }}</strong> khách bạn có thể xin
               </span>
             </div>
             <span class="lfb-tip-role">{{ roleLabel }}</span>
@@ -24,24 +24,24 @@
 
           <div class="lfb-tip-section">
             <div class="lfb-tip-section-title">Bạn hôm nay</div>
-            <div class="lfb-tip-row" :title="'Quota cho phép: ' + (stats.my.bonusToday > 0 ? (stats.config.maxPerDay + ' base + ' + stats.my.bonusToday + ' bonus admin cấp = ' + stats.my.effectiveCap) : stats.config.maxPerDay + ' base') + ' lượt/ngày'">
-              <span>Quota còn</span>
+            <div class="lfb-tip-row" :title="'Số lượt cho phép: ' + (stats.my.bonusToday > 0 ? (stats.config.maxPerDay + ' lượt mặc định + ' + stats.my.bonusToday + ' lượt quản lý cấp thêm = ' + stats.my.effectiveCap) : stats.config.maxPerDay + ' lượt mặc định') + ' / ngày'">
+              <span>Lượt còn</span>
               <strong>
                 {{ stats.my.remainingToday }} / {{ stats.my.effectiveCap ?? stats.config.maxPerDay }} lượt
-                <span v-if="stats.my.bonusToday > 0" class="bonus-tag">+{{ stats.my.bonusToday }} bonus</span>
+                <span v-if="stats.my.bonusToday > 0" class="bonus-tag">+{{ stats.my.bonusToday }} thưởng</span>
               </strong>
             </div>
-            <div class="lfb-tip-row" title="Số lead thực tế trong pool có thể xin (sau khi loại lead bạn đang giữ + sale khác đang chăm + cooldown).">
-              <span>Pool có sẵn</span><strong>{{ stats.poolAvailable }} lead</strong>
+            <div class="lfb-tip-row" title="Số khách thực tế trong kho có thể xin (sau khi trừ khách bạn đang giữ, sale khác đang chăm và khách đang khoá).">
+              <span>Khách có sẵn</span><strong>{{ stats.poolAvailable }} khách</strong>
             </div>
-            <div class="lfb-tip-row lfb-tip-row-highlight" title="Số lead thực sự nhận được = min(quota còn, pool sẵn)">
+            <div class="lfb-tip-row lfb-tip-row-highlight" title="Số khách bạn nhận được = số nhỏ hơn giữa (Lượt còn) và (Khách có sẵn)">
               <span>→ Xin được tiếp</span>
-              <strong class="ok">{{ Math.min(stats.my.remainingToday, stats.poolAvailable) }} lead</strong>
+              <strong class="ok">{{ Math.min(stats.my.remainingToday, stats.poolAvailable) }} khách</strong>
             </div>
             <div class="lfb-tip-divider"></div>
             <div class="lfb-tip-row"><span>Đã nhận</span><strong>{{ stats.my.requestedToday }}</strong></div>
-            <div class="lfb-tip-row"><span>Đã note</span><strong class="ok">{{ stats.my.noted }}</strong></div>
-            <div v-if="stats.my.pending > 0" class="lfb-tip-row"><span>⚠ Chưa note</span><strong class="warn">{{ stats.my.pending }}</strong></div>
+            <div class="lfb-tip-row"><span>Đã ghi chú</span><strong class="ok">{{ stats.my.noted }}</strong></div>
+            <div v-if="stats.my.pending > 0" class="lfb-tip-row"><span>⚠ Chưa ghi chú</span><strong class="warn">{{ stats.my.pending }}</strong></div>
             <ul v-if="stats.my.history.length" class="lfb-tip-history">
               <li
                 v-for="h in stats.my.history.slice(0, 5)"
@@ -59,18 +59,18 @@
           </div>
 
           <div v-if="stats.team" class="lfb-tip-section lfb-tip-team">
-            <div class="lfb-tip-section-title">👥 Team {{ stats.team.departmentName }} ({{ stats.team.memberCount }} sale)</div>
+            <div class="lfb-tip-section-title">👥 Phòng {{ stats.team.departmentName }} ({{ stats.team.memberCount }} nhân viên)</div>
             <div class="lfb-tip-row"><span>Tổng nhận hôm nay</span><strong>{{ stats.team.totalLeadsToday }}</strong></div>
             <ul class="lfb-tip-members">
               <li v-for="m in stats.team.members.slice(0, 5)" :key="m.userId" class="lfb-tip-member">
                 <span class="lfb-tip-m-name">{{ m.fullName }}</span>
-                <span class="lfb-tip-m-stats">{{ m.requestedToday }} nhận · <span class="ok">{{ m.notedToday }} note</span><span v-if="m.pendingNote > 0"> · <span class="warn">{{ m.pendingNote }} chưa note</span></span></span>
+                <span class="lfb-tip-m-stats">{{ m.requestedToday }} nhận · <span class="ok">{{ m.notedToday }} ghi chú</span><span v-if="m.pendingNote > 0"> · <span class="warn">{{ m.pendingNote }} chưa ghi chú</span></span></span>
                 <button
                   class="lfb-reset-btn"
                   :disabled="m.notedToday === 0 && m.requestedToday === 0"
-                  :title="`Review & reset quota cho ${m.fullName}`"
+                  :title="`Duyệt và cấp thêm lượt cho ${m.fullName}`"
                   @click.stop="openResetForUser(m.userId, m.fullName)"
-                >🔄 Reset</button>
+                >🔄 Cấp thêm</button>
               </li>
             </ul>
             <button
@@ -81,9 +81,9 @@
           </div>
 
           <div v-if="stats.org" class="lfb-tip-section lfb-tip-org">
-            <div class="lfb-tip-section-title">🏢 Toàn org</div>
-            <div class="lfb-tip-row"><span>Lead chia hôm nay</span><strong>{{ stats.org.totalLeadsToday }}</strong></div>
-            <div class="lfb-tip-row"><span>Nick rảnh ({{ stats.org.idleNickCount }})</span><strong>sẵn sàng chia</strong></div>
+            <div class="lfb-tip-section-title">🏢 Toàn tổ chức</div>
+            <div class="lfb-tip-row"><span>Khách chia hôm nay</span><strong>{{ stats.org.totalLeadsToday }}</strong></div>
+            <div class="lfb-tip-row"><span>Nick Zalo rảnh ({{ stats.org.idleNickCount }})</span><strong>sẵn sàng chia</strong></div>
             <ul v-if="stats.org.idleNicks.length" class="lfb-tip-nicks">
               <li v-for="n in stats.org.idleNicks.slice(0, 5)" :key="n.id" class="lfb-tip-nick">
                 💤 {{ n.displayName }} <span class="muted">— {{ n.ownerName }}</span>
@@ -94,7 +94,7 @@
               class="lfb-see-all"
               @click.stop="openNicksFullList(stats.org.idleNicks, `💤 Nick rảnh trong org`)"
             >Xem tất cả {{ stats.org.idleNicks.length }} nick →</button>
-            <div v-if="stats.org.topSales.length" class="lfb-tip-section-title" style="margin-top: 8px;">Top sale nhận nhiều</div>
+            <div v-if="stats.org.topSales.length" class="lfb-tip-section-title" style="margin-top: 8px;">Nhân viên nhận nhiều nhất</div>
             <ul class="lfb-tip-members">
               <li v-for="s in stats.org.topSales" :key="s.userId" class="lfb-tip-member">
                 <span class="lfb-tip-m-name">{{ s.fullName }}</span>
@@ -103,7 +103,7 @@
                   class="lfb-reset-btn"
                   :title="`Review & reset quota cho ${s.fullName}`"
                   @click.stop="openResetForUser(s.userId, s.fullName)"
-                >🔄 Reset</button>
+                >🔄 Cấp thêm</button>
               </li>
             </ul>
           </div>
@@ -136,7 +136,7 @@
         </template>
 
         <template v-else>
-          <span class="lfb-text">Nhận Lead</span>
+          <span class="lfb-text">Nhận khách</span>
           <!-- Badge = min(quota còn, pool sẵn) khi đã hover (stats loaded), fallback quota khi chưa.
                Đồng bộ với tooltip "→ Xin được tiếp" để anh thấy 1 con số nhất quán. -->
           <span
@@ -262,9 +262,9 @@ const expiresLabel = computed(() => {
 const roleLabel = computed(() => {
   const r = stats.value?.role;
   if (r === 'owner') return '👑 Chủ tổ chức';
-  if (r === 'admin') return '🛡 Admin';
+  if (r === 'admin') return '🛡 Quản trị';
   if (stats.value?.team) return '🎖 Quản lý';
-  return '👤 Sale';
+  return '👤 Nhân viên';
 });
 
 // Bug fix: auto-refresh khi countdown cooldown hết
@@ -317,7 +317,7 @@ async function reopenPendingLead() {
     leadData.value = data as LeadPayload;
     leadOpen.value = true;
   } catch (err: any) {
-    showToast(err?.response?.data?.error || 'Không tải được lead cũ. Vui lòng F5 lại trang.');
+    showToast(err?.response?.data?.error || 'Không tải được khách cũ. Vui lòng tải lại trang.');
   }
 }
 
@@ -331,14 +331,14 @@ async function onClick() {
   }
 
   if (btnMode.value === 'cooldown') {
-    showToast(`Đợi ${cooldownLabel.value} nữa để xin lead tiếp`);
+    showToast(`Đợi ${cooldownLabel.value} nữa để nhận khách tiếp`);
     return;
   }
 
   if (!state.value.canRequest) {
-    if (state.value.reason === 'daily_cap') showToast('Bạn đã hết quota lead hôm nay. Quay lại ngày mai.');
-    else if (state.value.reason === 'disabled') showToast('Tính năng Nhận Lead đang tắt');
-    else showToast('Không thể xin lead lúc này');
+    if (state.value.reason === 'daily_cap') showToast('Bạn đã hết lượt nhận khách hôm nay. Quay lại ngày mai nhé.');
+    else if (state.value.reason === 'disabled') showToast('Tính năng Nhận khách đang tắt');
+    else showToast('Không thể nhận khách lúc này');
     return;
   }
 
@@ -348,7 +348,7 @@ async function onClick() {
     leadOpen.value = true;
     stats.value = null;
   } else {
-    showToast(leadError.value || 'Không xin được lead');
+    showToast(leadError.value || 'Không nhận được khách');
     void fetchEligibility();
   }
 }
@@ -367,7 +367,7 @@ function openResetForUser(userId: string, userName: string) {
   showTooltip.value = false;
 }
 function onResetGranted(payload: { bonusCount: number; reviewedCount: number }) {
-  showToast(`✅ Đã cấp +${payload.bonusCount} lead. Review ${payload.reviewedCount} lead xong.`, true);
+  showToast(`✅ Đã cấp thêm +${payload.bonusCount} lượt. Đã duyệt ${payload.reviewedCount} khách.`, true);
   stats.value = null;
   void fetchEligibility();
 }
@@ -437,15 +437,15 @@ function historyStatusIcon(h: HistoryItem): string {
 }
 function historyStatusTag(h: HistoryItem): string {
   const s = historyStatus(h);
-  return ({ caring: 'Đang chăm', manual_return: 'Đã trả', auto_return: 'Tự trả', pending: 'Chưa note' } as Record<LeadStatusKey, string>)[s];
+  return ({ caring: 'Đang chăm', manual_return: 'Đã trả', auto_return: 'Tự trả', pending: 'Chưa ghi chú' } as Record<LeadStatusKey, string>)[s];
 }
 function historyStatusTitle(h: HistoryItem): string {
   const s = historyStatus(h);
   const t = ({
-    caring: 'Note xong, đang chăm KH (khoá pool ngày)',
-    manual_return: 'Đã chủ động trả lại pool',
-    auto_return: 'Quá hạn note — hệ thống tự trả pool',
-    pending: 'Đang chờ ghi note',
+    caring: 'Đã ghi chú, đang chăm khách',
+    manual_return: 'Đã chủ động trả lại kho',
+    auto_return: 'Quá hạn ghi chú — hệ thống tự trả lại',
+    pending: 'Đang chờ bạn ghi chú',
   } as Record<LeadStatusKey, string>)[s];
   return `${h.contactName} · ${t}`;
 }
