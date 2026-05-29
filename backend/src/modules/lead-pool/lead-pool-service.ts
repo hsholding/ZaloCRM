@@ -1654,9 +1654,15 @@ export async function getLeadPoolStats(args: { orgId: string; userId: string; ro
       contact: { select: { fullName: true, crmName: true, phone: true } },
     },
   });
+  // Phase v2.J 2026-05-29 — bug: tooltip cũ tính remainingToday = maxPerDay - todayCount
+  // → KHÔNG include bonus admin grant. Sale nhận 13/10 (admin +3) hiển thị "0/10" sai.
+  const bonusToday = await getBonusQuotaTodayVN(args.userId);
+  const effectiveCap = config.maxRequestsPerDay + bonusToday;
   const myStats = {
     requestedToday: myToday.length,
-    remainingToday: Math.max(0, config.maxRequestsPerDay - myToday.length),
+    remainingToday: Math.max(0, effectiveCap - myToday.length),
+    bonusToday,
+    effectiveCap,
     noted: myToday.filter((r) => r.noteSubmittedAt !== null).length,
     pending: myToday.filter((r) => r.noteSubmittedAt === null && r.releaseReason === null).length,
     returned: myToday.filter((r) => r.releaseReason !== null).length,

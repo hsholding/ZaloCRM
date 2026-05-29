@@ -24,8 +24,12 @@
 
           <div class="lfb-tip-section">
             <div class="lfb-tip-section-title">Bạn hôm nay</div>
-            <div class="lfb-tip-row" title="Quota cho phép: tối đa N lượt nhận lead / ngày (config admin set).">
-              <span>Quota còn</span><strong>{{ stats.my.remainingToday }} / {{ stats.config.maxPerDay }} lượt</strong>
+            <div class="lfb-tip-row" :title="'Quota cho phép: ' + (stats.my.bonusToday > 0 ? (stats.config.maxPerDay + ' base + ' + stats.my.bonusToday + ' bonus admin cấp = ' + stats.my.effectiveCap) : stats.config.maxPerDay + ' base') + ' lượt/ngày'">
+              <span>Quota còn</span>
+              <strong>
+                {{ stats.my.remainingToday }} / {{ stats.my.effectiveCap ?? stats.config.maxPerDay }} lượt
+                <span v-if="stats.my.bonusToday > 0" class="bonus-tag">+{{ stats.my.bonusToday }} bonus</span>
+              </strong>
             </div>
             <div class="lfb-tip-row" title="Số lead thực tế trong pool có thể xin (sau khi loại lead bạn đang giữ + sale khác đang chăm + cooldown).">
               <span>Pool có sẵn</span><strong>{{ stats.poolAvailable }} lead</strong>
@@ -515,6 +519,7 @@ watch(() => route.path, (path) => {
 .lfb-tip-row-highlight { background: #ECFDF5; margin: 2px -4px; padding: 4px 6px; border-radius: 6px; border-left: 3px solid #10B981; }
 .lfb-tip-row-highlight span { color: #047857; font-weight: 600; }
 .lfb-tip-divider { height: 1px; background: #E5E7EB; margin: 4px 0; }
+.bonus-tag { display: inline-block; background: linear-gradient(135deg, #FBBF24, #F59E0B); color: white; font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.03em; box-shadow: 0 1px 2px rgba(245, 158, 11, 0.3); }
 .ok { color: #047857; }
 .warn { color: #B91C1C; }
 .muted { color: #94A3B8; }
