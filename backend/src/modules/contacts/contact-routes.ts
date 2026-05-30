@@ -590,6 +590,92 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── POST /api/v1/contacts/:id/virtual-conversation — M53 2026-05-30 ──────
+  // Anh chốt Approach A: KH no-Zalo có conversation ảo trong /chat để sale ghi nhật ký + AI trợ lý.
+  // Idempotent: nếu virtual conv đã tồn tại cho cặp (contact, nick mặc định của sale) thì return luôn.
+  // externalThreadId synthetic: `virtual:{contactId}:{nickId}` để né unique constraint.
+  app.post('/api/v1/contacts/:id/virtual-conversation', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id: contactId } = request.params as { id: string };
+
+      // 1. Verify contact thuộc org + visible
+      const contact = await prisma.contact.findFirst({
+        where: { id: contactId, orgId: user.orgId },
+        select: { id: true, fullName: true, crmName: true, hasZalo: true, assignedUserId: true },
+      });
+      if (!contact) return reply.status(404).send({ error: 'Contact không tồn tại' });
+      await assertContactVisible({
+        userId: user.id,
+        orgId: user.orgId,
+        legacyRole: user.role,
+        contactId,
+      });
+
+      // 2. Pick nick mặc định của sale (nick đầu tiên trong scope, ưu tiên nick mình sở hữu)
+      const scope = await getZaloScope(user.id, user.orgId, user.role);
+      if (!scope.accessibleIds.length) {
+        return reply.status(400).send({
+          error: 'no_nick',
+          message: 'Anh chưa có nick Zalo nào trong tài khoản. Vui lòng kết nối nick trước.',
+        });
+      }
+      const myNickId =
+        scope.accessibleIds.find((id) => scope.ownedIds.has(id)) ?? scope.accessibleIds[0];
+
+      // 3. Idempotent: tìm virtual conv đã có cho cặp (contact, nick) chưa
+      const externalThreadId = `virtual:${contactId}:${myNickId}`;
+      const existing = await prisma.conversation.findFirst({
+        where: {
+          orgId: user.orgId,
+          contactId,
+          zaloAccountId: myNickId,
+          isVirtual: true,
+        },
+        select: { id: true },
+      });
+
+      if (existing) {
+        return reply.status(200).send({ conversationId: existing.id, created: false });
+      }
+
+      // 4. Create virtual conv mới
+      const created = await prisma.conversation.create({
+        data: {
+          orgId: user.orgId,
+          zaloAccountId: myNickId,
+          contactId,
+          threadType: 'user',
+          externalThreadId,
+          isVirtual: true,
+          lastMessageAt: new Date(),
+          tab: 'main',
+        },
+        select: { id: true },
+      });
+
+      // 5. Audit log (fire-and-forget)
+      logActivity({
+        orgId: user.orgId,
+        userId: user.id,
+        category: 'system',
+        action: 'virtual_conversation_created',
+        entityType: 'contact',
+        entityId: contactId,
+        details: {
+          conversationId: created.id,
+          nickId: myNickId,
+          contactHasZalo: contact.hasZalo,
+        },
+      });
+
+      return reply.status(201).send({ conversationId: created.id, created: true });
+    } catch (err) {
+      logger.error('[contacts] virtual-conversation error:', err);
+      return reply.status(500).send({ error: 'Failed to create virtual conversation' });
+    }
+  });
+
   // ── PUT /api/v1/contacts/:id — update CRM fields ─────────────────────────
   app.put('/api/v1/contacts/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {

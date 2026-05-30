@@ -33,6 +33,7 @@ model Organization {
   messageTemplates          MessageTemplate[]
   aiConfig                  AiConfig?
   aiSuggestions             AiSuggestion[]
+  aiSuggestionsApplied      AiSuggestionApplied[]
   pinnedConversations       PinnedConversation[]
   groupPolls                GroupPoll[]
   friendshipAttempts        FriendshipAttempt[]
@@ -84,9 +85,9 @@ model Organization {
   adminFallbackPhone     String? @map("admin_fallback_phone")
 
   // Wave 2 Welcome Probe 2026-05-29 — config send welcome msg sau friend accept
-  welcomeDelayAfterFriendReqSec Int     @default(60)   @map("welcome_delay_after_friend_req_sec")
+  welcomeDelayAfterFriendReqSec Int     @default(60) @map("welcome_delay_after_friend_req_sec")
   welcomeStrangerInboxEnabled   Boolean @default(true) @map("welcome_stranger_inbox_enabled")
-  welcomeMaxRetries             Int     @default(2)    @map("welcome_max_retries")
+  welcomeMaxRetries             Int     @default(2) @map("welcome_max_retries")
   welcomeHardFailStops          Boolean @default(true) @map("welcome_hard_fail_stops")
 
   // Phase Lead Pool 2026-05-24 — reverse relations
@@ -208,6 +209,8 @@ model User {
   leadBonusGranted          LeadPoolBonusQuota[]    @relation("LeadPoolBonusGranter")
   // Phase Privacy OTP 2026-05-27
   privacyOtpTokens          PrivacyOtpToken[]       @relation("PrivacyOtpUser")
+  // M53 (2026-05-30): AI suggestions sale applied
+  aiSuggestionsApplied      AiSuggestionApplied[]
 
   @@map("users")
 }
@@ -483,6 +486,9 @@ model Contact {
   // Daily engagement aggregate rows (cascade delete)
   engagementDaily ContactEngagementDaily[]
 
+  // M53 (2026-05-30): AI suggestions applied to this Contact (virtual chat assistant)
+  aiSuggestionsApplied AiSuggestionApplied[]
+
   @@unique([orgId, zaloGlobalId])
   @@index([orgId, phone])
   @@index([orgId, phoneNormalized])
@@ -553,6 +559,10 @@ model Conversation {
   unreadCount       Int       @default(0) @map("unread_count")
   isReplied         Boolean   @default(true) @map("is_replied")
   tab               String    @default("main") @map("tab") // main, other
+  // M53 (2026-05-30): Virtual conversation cho KH no-Zalo. isVirtual=true → chat-routes skip
+  // Zalo SDK send, lưu thẳng Message isLocal=true. externalThreadId synthetic 'virtual:{contactId}:{nickId}'.
+  // Memory M53: anh chốt Approach A — sale có 1 chỗ duy nhất xem TẤT CẢ KH trong /chat.
+  isVirtual         Boolean   @default(false) @map("is_virtual")
   createdAt         DateTime  @default(now()) @map("created_at")
 
   org           Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -616,6 +626,12 @@ model Message {
   // 'automation' = bot/sequence/broadcast/NBA suggest gửi qua engine
   // 'system' = CRM internal (reminder card, system notice — chưa dùng, reserved)
   sentVia         String    @default("user") @map("sent_via")
+  // M53 (2026-05-30): isLocal=true cho message KHÔNG gửi qua Zalo SDK (virtual conv hoặc AI assistant).
+  // Worker/metrics/automation aggregator phải filter WHERE isLocal=false. zaloMsgId synthetic 'local:{cuid}' để né NULL collision.
+  // senderType có thêm value 'ai_assistant' khi AI trợ lý reply trong virtual chat.
+  // metadata Json lưu extracted entities AI suggest: { extracted: {...}, confidenceScore, missingFields }
+  isLocal         Boolean   @default(false) @map("is_local")
+  metadata        Json?
   createdAt       DateTime  @default(now()) @map("created_at")
 
   conversation Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1104,18 +1120,44 @@ model MessageTemplate {
 }
 
 model AiConfig {
-  id        String   @id @default(uuid())
-  orgId     String   @unique @map("org_id")
-  provider  String   @default("anthropic")
-  model     String   @default("claude-sonnet-4-6")
-  maxDaily  Int      @default(500) @map("max_daily")
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                          String   @id @default(uuid())
+  orgId                       String   @unique @map("org_id")
+  provider                    String   @default("anthropic")
+  model                       String   @default("claude-sonnet-4-6")
+  maxDaily                    Int      @default(500) @map("max_daily")
+  enabled                     Boolean  @default(true)
+  // M53 (2026-05-30): AI Trợ Lý cho Virtual Chat. Anh edit promptTemplate qua /settings/crm/ai-assistant.
+  // Default skip regex: "ok", "uhm", "ờ" — tránh gọi AI cho tin nhắn noise.
+  aiAssistantEnabled          Boolean  @default(true) @map("ai_assistant_enabled")
+  aiAssistantPromptTemplate   String?  @map("ai_assistant_prompt_template") @db.Text
+  aiAssistantSkipNoisePattern String   @default("^(ok|oke|okay|uhm|um|ờ|à|ừ|a|o|yes|no|y|n|\\.|\\.\\.|\\.\\.\\.)\\s*$") @map("ai_assistant_skip_noise_pattern")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@map("ai_configs")
+}
+
+// M53 (2026-05-30): Audit log mỗi lần sale click "Áp dụng" trên AiSuggestionCard.
+// Lưu acceptedFields để track AI accuracy + replay nếu cần undo.
+model AiSuggestionApplied {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  contactId      String   @map("contact_id")
+  messageId      String   @map("message_id") // FK Message chứa AI suggestion (metadata.extracted)
+  userId         String   @map("user_id") // sale đã apply
+  acceptedFields Json     @map("accepted_fields") // [{field, oldValue, newValue}]
+  rejectedFields Json?    @map("rejected_fields") // optional, học pattern
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id])
+
+  @@index([orgId, contactId])
+  @@index([orgId, createdAt])
+  @@map("ai_suggestions_applied")
 }
 
 model AiSuggestion {
@@ -1795,29 +1837,29 @@ model AutomationSequence {
 // `ruleOverrides` JSON: override sequence.runtimeRules tại trigger level
 // (vd trigger sinh nhật chỉ chạy giờ 9-18).
 model AutomationTrigger {
-  id                  String   @id @default(uuid())
-  orgId               String   @map("org_id")
-  name                String
-  category            String   @default("general") // 'general' | 'keyword' | 'bot_api' | 'livechat' | 'genai'
-  eventType           String   @map("event_type")
-  eventFilter         Json?    @map("event_filter")
-  bindingKind         String   @map("binding_kind") // 'sequence' | 'block' | 'broadcast'
-  sequenceId          String?  @map("sequence_id")
-  blockId             String?  @map("block_id")
-  broadcastId         String?  @map("broadcast_id")
-  segmentSpec         Json?    @map("segment_spec")
-  ruleOverrides       Json?    @map("rule_overrides")
-  enabled             Boolean  @default(true)
+  id                     String   @id @default(uuid())
+  orgId                  String   @map("org_id")
+  name                   String
+  category               String   @default("general") // 'general' | 'keyword' | 'bot_api' | 'livechat' | 'genai'
+  eventType              String   @map("event_type")
+  eventFilter            Json?    @map("event_filter")
+  bindingKind            String   @map("binding_kind") // 'sequence' | 'block' | 'broadcast'
+  sequenceId             String?  @map("sequence_id")
+  blockId                String?  @map("block_id")
+  broadcastId            String?  @map("broadcast_id")
+  segmentSpec            Json?    @map("segment_spec")
+  ruleOverrides          Json?    @map("rule_overrides")
+  enabled                Boolean  @default(true)
   // Phase Friend Invite 2026-05-28 — successor sequence + greeting template
-  successorSequenceId String?  @map("successor_sequence_id")
-  greetingTemplate    String?  @map("greeting_template") @db.Text
+  successorSequenceId    String?  @map("successor_sequence_id")
+  greetingTemplate       String?  @map("greeting_template") @db.Text
   // Wave 2 2026-05-29 — per-trigger welcome probe (split from Org-level)
-  welcomeMessageTemplate String? @map("welcome_message_template") @db.Text
-  welcomeDelaySeconds    Int     @default(60) @map("welcome_delay_seconds")
-  state               String   @default("draft") // 'draft' | 'active' | 'paused' | 'cancelling' | 'cancelled' | 'completed'
-  createdById         String   @map("created_by_id")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  welcomeMessageTemplate String?  @map("welcome_message_template") @db.Text
+  welcomeDelaySeconds    Int      @default(60) @map("welcome_delay_seconds")
+  state                  String   @default("draft") // 'draft' | 'active' | 'paused' | 'cancelling' | 'cancelled' | 'completed'
+  createdById            String   @map("created_by_id")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
 
   org       Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   sequence  AutomationSequence?  @relation("TriggerSequence", fields: [sequenceId], references: [id], onDelete: SetNull)
@@ -2498,13 +2540,13 @@ model FriendRequestOutbox {
   createdAt               DateTime  @default(now()) @map("created_at")
 
   // Wave 2 Welcome Probe 2026-05-29 — outbox cũng dùng cho welcome task sau friend accept
-  kind                    String    @default("FRIEND_REQUEST") @map("kind") // FRIEND_REQUEST | WELCOME
-  parentTaskId            String?   @map("parent_task_id") // link welcome → friend_request gốc
-  allowStrangerMessage    Boolean   @default(false) @map("allow_stranger_message")
-  welcomeOutcome          String?   @map("welcome_outcome") // sent | retry | dropped | blocked
-  welcomeSentAt           DateTime? @map("welcome_sent_at")
-  welcomeRetryCount       Int       @default(0) @map("welcome_retry_count")
-  welcomeLastError        String?   @map("welcome_last_error") @db.Text
+  kind                 String    @default("FRIEND_REQUEST") @map("kind") // FRIEND_REQUEST | WELCOME
+  parentTaskId         String?   @map("parent_task_id") // link welcome → friend_request gốc
+  allowStrangerMessage Boolean   @default(false) @map("allow_stranger_message")
+  welcomeOutcome       String?   @map("welcome_outcome") // sent | retry | dropped | blocked
+  welcomeSentAt        DateTime? @map("welcome_sent_at")
+  welcomeRetryCount    Int       @default(0) @map("welcome_retry_count")
+  welcomeLastError     String?   @map("welcome_last_error") @db.Text
 
   @@unique([customerListEntryId, kind])
   @@index([sendStatus, sequenceMaterializedAt])

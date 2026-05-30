@@ -109,6 +109,8 @@ export interface Conversation {
   isReplied: boolean;
   isPinned?: boolean;
   messages?: ConversationMessage[];
+  /** M53 2026-05-30: Virtual conversation cho KH no-Zalo. Tin nhắn lưu nội bộ, KHÔNG gửi qua Zalo SDK. */
+  isVirtual?: boolean;
 }
 
 export interface MessageReactionView {

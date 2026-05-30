@@ -80,6 +80,7 @@
           active: conv.id === selectedId,
           unread: conv.unreadCount > 0 && conv.id !== selectedId,
           'is-group': conv.threadType === 'group',
+          'is-virtual': conv.isVirtual,
         }"
         @click="$emit('select', conv.id)"
         @contextmenu.prevent="openContextMenu($event, conv)"
@@ -114,6 +115,7 @@
           <div class="ci-name-row">
             <div class="ci-name">
               <span v-if="conv.threadType === 'group'" class="group-icon">👥</span>
+              <span v-if="conv.isVirtual" class="virtual-chip" title="Chat nội bộ — KH chưa có Zalo, tin nhắn KHÔNG gửi đi">🔒</span>
               {{ displayName(conv) }}
             </div>
             <div class="ci-meta-right">
@@ -1086,6 +1088,32 @@ function onPatternLeave() {
 .conv-item.active:hover,
 .conv-item.is-group.active:hover {
   background: var(--smax-primary-soft) !important;
+}
+
+/* M53 2026-05-30: Virtual conversation — nền cam nhạt + chip 🔒 */
+.conv-item.is-virtual {
+  background: #fff7ed;
+  border-left: 3px solid #fb923c;
+  padding-left: calc(var(--ci-padding-x, 9px) - 3px);
+}
+.conv-item.is-virtual:hover { background: #ffedd5; }
+.conv-item.is-virtual.active {
+  background: #ffedd5 !important;
+  box-shadow: inset 0 0 0 1.5px #f97316 !important;
+}
+.virtual-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffedd5;
+  color: #c2410c;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-weight: 700;
+  margin-right: 4px;
+  line-height: 16px;
+  height: 16px;
 }
 
 /* Unread count badge — pill xám mờ dưới timestamp */

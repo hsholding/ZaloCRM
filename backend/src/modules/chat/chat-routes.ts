@@ -812,6 +812,56 @@ export async function chatRoutes(app: FastifyInstance) {
     });
     if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
 
+    // ── M53 2026-05-30: Virtual conversation gate ──────────────────────────
+    // KH no-Zalo có conversation ảo trong /chat. Tin nhắn lưu thẳng DB, KHÔNG qua Zalo SDK.
+    // Skip rate-limit + privacy check + SDK send. Anh chốt Approach A — sale dùng làm nhật ký.
+    if (conversation.isVirtual) {
+      try {
+        const localMsgId = `local:${randomUUID()}`;
+        const message = await prisma.message.create({
+          data: {
+            id: randomUUID(),
+            conversationId: id,
+            zaloMsgId: localMsgId, // synthetic — né NULL collision trên @@unique([conversationId, zaloMsgId])
+            zaloMsgIdNum: null,
+            senderType: 'self',
+            senderUid: conversation.zaloAccount.zaloUid || '',
+            senderName: 'Staff',
+            content,
+            contentType: 'text',
+            sentAt: new Date(),
+            repliedByUserId: user.id,
+            isLocal: true,
+            sentVia: 'user',
+          },
+        });
+
+        await prisma.conversation.update({
+          where: { id },
+          data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+        });
+
+        const safeMessage = { ...message, zaloMsgIdNum: null as string | null };
+        const io = (app as any).io as Server;
+        io?.emit('chat:message', {
+          accountId: conversation.zaloAccountId,
+          message: safeMessage,
+          conversationId: id,
+          _virtual: true,
+        });
+
+        // M53 AI Trợ Lý: trigger reply async, KHÔNG block response
+        // (Implement ở Ngày 3 — POST /ai/virtual-chat-reply)
+        // void aiVirtualChatService.triggerReply(id, message.id, user.orgId).catch(...)
+
+        return safeMessage;
+      } catch (err) {
+        logger.error('[chat] Virtual message save error:', err);
+        return reply.status(500).send({ error: 'Failed to save virtual message' });
+      }
+    }
+    // ── END M53 Virtual gate ───────────────────────────────────────────────
+
     const instance = zaloPool.getInstance(conversation.zaloAccountId);
     if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
 
