@@ -25,9 +25,11 @@
         </td>
         <td class="field-label">{{ row.label }}</td>
         <td class="field-value">
-          <span v-if="row.isExisting" class="existing-pill">✓ Đã có</span>
-          <span v-if="row.isExisting && checked[row.field]" class="overwrite-pill" title="Sẽ ghi đè giá trị cũ">⚠ Sẽ ghi đè</span>
-          {{ row.displayValue }}
+          <span class="value-inline">
+            <span v-if="row.isExisting" class="existing-pill">✓ Đã có</span>
+            <span v-if="row.isExisting && checked[row.field]" class="overwrite-pill" title="Sẽ ghi đè giá trị cũ">⚠ Sẽ ghi đè</span>
+            <span class="value-text">{{ row.displayValue }}</span>
+          </span>
         </td>
       </tr>
       <tr v-if="!rows.length">
@@ -340,18 +342,25 @@ function onSkip() {
   color: #181d26;                       /* AT.ink */
   line-height: 1.4;
   vertical-align: middle;
-  /* M55.7 2026-05-30: flex container ép pill + text VISUALLY CENTER trong cell.
-     Trước đây inline-flow + vertical-align:middle chỉ align theo baseline → pill 11px
-     vs text 14px vẫn lệch ~2px. Flex align-items center fix triệt để. */
-  display: flex;
+  /* M55.8 2026-05-30: GIỮ td bình thường (display: table-cell), KHÔNG flex trên td
+     vì làm bể table layout (label rớt dòng). Dùng span.value-inline bên trong
+     để flex align center. */
+}
+/* M55.8 2026-05-30: inline wrapper flex để pill + text visually center */
+.value-inline {
+  display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  vertical-align: middle;
 }
-/* M55.7: bỏ margin-right cũ của pill vì gap đã handle khoảng cách */
-.field-value > .existing-pill,
-.field-value > .overwrite-pill {
-  margin-right: 0;
+.value-inline .existing-pill,
+.value-inline .overwrite-pill {
+  margin-right: 0;                      /* gap đã handle khoảng cách */
+}
+.value-text {
+  /* text giá trị inline với pills */
+  line-height: 1.4;
 }
 
 /* ── Pills ── */
