@@ -256,8 +256,8 @@ function onSkip() {
   background: #ffffff;
   border: 1px solid #dddddd;            /* AT.hairline — bỏ indigo */
   border-radius: 10px;                  /* RADIUS.md */
-  padding: 16px 18px;                   /* SPACE.md — thoáng */
-  font-size: 14px;                      /* TYPE.bodyMd — tăng từ 12 */
+  padding: 12px 14px;                   /* M55.10: 16x18 → 12x14 (-25%) cùng nhịp với row -15% */
+  font-size: 13px;                      /* M55.10: 14→13px (-1 size) anh chốt */
   line-height: 1.4;
   color: #333840;                       /* AT.body */
   box-shadow: none;                     /* Airtable: flat */
@@ -267,20 +267,20 @@ function onSkip() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
-  padding-bottom: 10px;
+  margin-bottom: 8px;                   /* M55.10: 12→8px */
+  padding-bottom: 8px;                  /* M55.10: 10→8px */
   border-bottom: 1px solid #eeeeee;     /* solid hairline — bỏ dashed indigo */
 }
 .ai-suggest-title {
-  font-size: 15px;
+  font-size: 14px;                      /* M55.10: 15→14px (-1 size) */
   font-weight: 500;                     /* Airtable: 500, never 600/700 */
   color: #181d26;                       /* AT.ink */
   letter-spacing: 0;
 }
 
 .confidence-badge {
-  font-size: 11.5px;
-  padding: 3px 10px;
+  font-size: 10.5px;                    /* M55.10: 11.5→10.5px (-1 size) */
+  padding: 2px 9px;
   border-radius: 9999px;                /* RADIUS.pill */
   background: #e3ede4;                  /* AT signatureForest tint */
   color: #0a2e0e;
@@ -301,9 +301,9 @@ function onSkip() {
 .suggest-table tr:hover { background: #f8fafc; }   /* AT.surfaceSoft */
 
 .suggest-table td {
-  padding: 10px 8px;                    /* M55.9: giảm 12→10px (-10% row height) anh chốt */
+  padding: 7px 8px;                     /* M55.10: giảm 10→7px (-15% row height) anh chốt */
   vertical-align: middle;               /* M55.6: căn giữa toàn bộ cells trong row */
-  font-size: 14px;
+  font-size: 13px;                      /* M55.10: 14→13px (-1 size) anh chốt */
   line-height: 1.4;                     /* M55.6: line-height đồng nhất tránh lệch dòng */
 }
 .suggest-table td:first-child {
@@ -328,7 +328,7 @@ function onSkip() {
 
 .field-label {
   width: 140px;                         /* tăng để Vietnamese label không wrap */
-  font-size: 14px;
+  font-size: 13px;                      /* M55.10: 14→13px (-1 size) */
   font-weight: 500;
   color: #41454d;                       /* AT.muted */
   letter-spacing: 0.16px;
@@ -337,7 +337,7 @@ function onSkip() {
   vertical-align: middle;
 }
 .field-value {
-  font-size: 14px;
+  font-size: 13px;                      /* M55.10: 14→13px (-1 size) */
   font-weight: 400;                     /* bodyMd — bỏ 500 để không quá đậm */
   color: #181d26;                       /* AT.ink */
   line-height: 1.4;
@@ -366,8 +366,8 @@ function onSkip() {
 /* ── Pills ── */
 .existing-pill {
   display: inline-block;
-  font-size: 11px;
-  padding: 2px 9px;
+  font-size: 10px;                      /* M55.10: 11→10px (-1 size) */
+  padding: 2px 8px;
   border-radius: 9999px;
   background: #f0f1f3;                  /* AT neutral tint */
   color: #41454d;
@@ -376,8 +376,8 @@ function onSkip() {
 }
 .overwrite-pill {
   display: inline-block;
-  font-size: 11px;
-  padding: 2px 9px;
+  font-size: 10px;                      /* M55.10: 11→10px (-1 size) */
+  padding: 2px 8px;
   border-radius: 9999px;
   background: #fdf3df;                  /* AT signatureMustard tint */
   color: #7a5818;
@@ -393,27 +393,27 @@ function onSkip() {
   color: #9297a0;
   text-align: center;
   font-style: normal;                   /* bỏ italic — Airtable không dùng */
-  padding: 22px !important;
-  font-size: 14px;
+  padding: 18px !important;             /* M55.10: 22→18px */
+  font-size: 13px;                      /* M55.10: 14→13px */
 }
 
 /* ── Actions ── */
 .suggest-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 12px;
+  gap: 8px;                             /* M55.10: 10→8px */
+  margin-top: 10px;                     /* M55.10: 14→10px */
+  padding-top: 10px;                    /* M55.10: 12→10px */
   border-top: 1px solid #eeeeee;
   justify-content: flex-end;
 }
 
 .btn-apply {
-  padding: 9px 18px;
+  padding: 7px 15px;                    /* M55.10: 9x18 → 7x15 (-22% size) */
   border-radius: 6px;                   /* RADIUS.sm */
   border: none;
   background: #181d26;                  /* AT.primary — bỏ indigo */
   color: #ffffff;
-  font-size: 13px;
+  font-size: 12px;                      /* M55.10: 13→12px (-1 size) */
   font-weight: 500;
   cursor: pointer;
   transition: background 0.12s ease;
@@ -426,11 +426,11 @@ function onSkip() {
 }
 
 .btn-skip {
-  padding: 9px 18px;
+  padding: 7px 15px;                    /* M55.10: 9x18 → 7x15 */
   border-radius: 6px;
   background: #ffffff;
   color: #181d26;                       /* dark text, không xám */
-  font-size: 13px;
+  font-size: 12px;                      /* M55.10: 13→12px (-1 size) */
   font-weight: 500;
   border: 1px solid #dddddd;            /* AT.hairline */
   cursor: pointer;
