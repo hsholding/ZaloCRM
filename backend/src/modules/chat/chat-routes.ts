@@ -15,6 +15,8 @@ import { applyContactAggregateFromMessage, applyFriendAggregate } from '../conta
 import { normalizePhone } from '../../shared/utils/phone.js';
 // M53 2026-05-30 — AI Trợ Lý cho Virtual Chat (KH no-Zalo)
 import { triggerVirtualChatAiReply } from '../ai/ai-virtual-chat-service.js';
+// M55 2026-05-30 — Auto-attach collaborator khi sale gửi tin virtual conv
+import { attachContactCollaboratorByUser } from '../contacts/contact-scope.js';
 
 type QueryParams = Record<string, string>;
 
@@ -857,6 +859,18 @@ export async function chatRoutes(app: FastifyInstance) {
           { conversationId: id, triggerMessageId: message.id, orgId: user.orgId },
           io,
         );
+
+        // M55 2026-05-30 — Auto-attach collaborator khi sale gửi tin virtual.
+        // Sale chăm KH qua chat = counter "Cùng chăm" +1 (idempotent).
+        // Fire-and-forget, không block response.
+        if (conversation.contactId) {
+          void attachContactCollaboratorByUser({
+            orgId: user.orgId,
+            contactId: conversation.contactId,
+            userId: user.id,
+            source: 'virtual_chat_message',
+          });
+        }
 
         return safeMessage;
       } catch (err) {

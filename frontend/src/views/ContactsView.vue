@@ -290,8 +290,24 @@
                 </span>
               </td>
               <td>
-                <!-- Nick chăm: 4 chip count theo trạng thái KB — anh chốt 2026-05-28 layout 2×2 -->
-                <div class="nick-count-grid">
+                <!-- M55 2026-05-30: KH no-Zalo (không có Friend) → avatar stack
+                     sale cùng chăm. KH có Zalo → giữ 4 chip Friend như cũ. -->
+                <div v-if="!hasAnyFriend(contact) && (contact.contactAccess?.length ?? 0) > 0" class="cung-cham-stack" :title="formatCungChamTooltip(contact)">
+                  <span
+                    v-for="(acc, idx) in (contact.contactAccess ?? []).slice(0, 4)"
+                    :key="acc.user?.id || idx"
+                    class="cc-avatar"
+                    :class="{ 'cc-primary': acc.role === 'primary' }"
+                    :style="{ background: avatarColor(acc.user?.fullName || acc.user?.email || '') }"
+                  >
+                    {{ initialOf(acc.user?.fullName || acc.user?.email || '?') }}
+                  </span>
+                  <span v-if="(contact.contactAccess?.length ?? 0) > 4" class="cc-more">
+                    +{{ (contact.contactAccess?.length ?? 0) - 4 }}
+                  </span>
+                  <span class="cc-count">{{ contact.contactAccess?.length ?? 0 }} sale</span>
+                </div>
+                <div v-else class="nick-count-grid">
                   <span v-for="b in nickCountChips(contact)" :key="b.kind" :class="['chip', 'nick-mini', b.cls]" :title="b.title">
                     {{ b.icon }} {{ b.count }}
                   </span>
@@ -1277,6 +1293,34 @@ function nickCountChips(contact: Contact): NickCountChip[] {
     { kind: 'ghost', icon: '⚪', count: m.ghost || 0, cls: 'chip-grey', title: 'Đã ngắt' },
   ];
 }
+
+// ════════ M55 2026-05-30 — "Cùng chăm" avatar stack cho KH no-Zalo ════════
+function hasAnyFriend(contact: Contact): boolean {
+  return (contact.childrenCount ?? 0) > 0;
+}
+function initialOf(name: string): string {
+  const t = name.trim();
+  if (!t) return '?';
+  const parts = t.split(/\s+/);
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+const AVATAR_COLORS = ['#0ea5e9', '#f97316', '#10b981', '#a855f7', '#ec4899', '#eab308', '#06b6d4', '#ef4444'];
+function avatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+function formatCungChamTooltip(contact: Contact): string {
+  const list = contact.contactAccess ?? [];
+  if (!list.length) return '';
+  const lines = list.map((a) => {
+    const name = a.user?.fullName || a.user?.email || 'Sale';
+    const roleLabel = a.role === 'primary' ? '⭐ Phụ trách chính' : '🤝 Cùng chăm';
+    return `${roleLabel}: ${name}`;
+  });
+  return `${list.length} sale đang/đã chăm KH này:\n${lines.join('\n')}`;
+}
 function onSaved() { fetchContacts(); }
 function onDeleted() { fetchContacts(); }
 function onDuplicateMerged() {
@@ -1770,6 +1814,50 @@ onMounted(() => {
   padding: 2px 6px;
   white-space: nowrap;
   text-align: center;
+}
+
+/* M55 2026-05-30: Cùng chăm avatar stack — cho KH no-Zalo */
+.cung-cham-stack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+.cc-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #94a3b8;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #e2e8f0;
+  margin-left: -6px;
+  text-transform: uppercase;
+}
+.cc-avatar:first-child { margin-left: 0; }
+.cc-avatar.cc-primary {
+  border: 2px solid #f59e0b;
+  box-shadow: 0 0 0 1px #fbbf24;
+}
+.cc-more {
+  font-size: 10px;
+  color: #64748b;
+  margin-left: 2px;
+  background: #f1f5f9;
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.cc-count {
+  font-size: 10px;
+  color: #475569;
+  margin-left: 4px;
+  white-space: nowrap;
 }
 
 /* Giới tính icon nhỏ + tuổi xuống hàng 2 */

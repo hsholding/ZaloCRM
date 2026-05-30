@@ -16,7 +16,7 @@ import { backfillMissingFriends } from './backfill-missing-friends.js';
 import { backfillFriendDisplayName } from './backfill-friend-display-name.js';
 import { migrateStatusTable } from './status-migration.js';
 import { computeAggregateDisplay, computeViewerPreview, AGGREGATE_INCLUDE } from './contact-aggregate-display.js';
-import { getContactScope, assertContactVisible } from './contact-scope.js';
+import { getContactScope, assertContactVisible, attachContactCollaboratorByUser, assertContactEditable } from './contact-scope.js';
 import { getZaloScope } from '../zalo/zalo-scope.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
@@ -514,6 +514,16 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       });
 
       if (existing) {
+        // M55 2026-05-30: Sale B add trùng SĐT KH của sale A → auto-attach
+        // ContactAccess.collaborator để counter "Cùng chăm" tăng + sale B
+        // thấy KH trong list của mình (không bị ẩn). Idempotent + best-effort.
+        await attachContactCollaboratorByUser({
+          orgId: user.orgId,
+          contactId: existing.id,
+          userId: user.id,
+          source: 'quick_add_duplicate',
+        });
+
         return reply.status(200).send({
           exists: true,
           contact: {
@@ -614,16 +624,28 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         contactId,
       });
 
-      // 2. Pick nick mặc định của sale (nick đầu tiên trong scope, ưu tiên nick mình sở hữu)
+      // 2. Pick nick — M55 2026-05-30: ưu tiên nick mình sở hữu, fallback nick org
+      // (sale mới chưa có nick Zalo vẫn mở được virtual chat — vì virtual ko gửi SDK,
+      // chỉ cần 1 zaloAccountId hợp lệ trong org để satisfy schema FK).
       const scope = await getZaloScope(user.id, user.orgId, user.role);
-      if (!scope.accessibleIds.length) {
+      let myNickId: string | null =
+        scope.accessibleIds.find((id) => scope.ownedIds.has(id)) ?? scope.accessibleIds[0] ?? null;
+
+      if (!myNickId) {
+        // Fallback: pick bất kỳ ZaloAccount nào trong org (virtual chat ko cần nick thật)
+        const anyNick = await prisma.zaloAccount.findFirst({
+          where: { orgId: user.orgId },
+          select: { id: true },
+        });
+        myNickId = anyNick?.id ?? null;
+      }
+
+      if (!myNickId) {
         return reply.status(400).send({
           error: 'no_nick',
-          message: 'Anh chưa có nick Zalo nào trong tài khoản. Vui lòng kết nối nick trước.',
+          message: 'Tổ chức chưa có nick Zalo nào. Vui lòng kết nối ít nhất 1 nick để dùng chat nội bộ.',
         });
       }
-      const myNickId =
-        scope.accessibleIds.find((id) => scope.ownedIds.has(id)) ?? scope.accessibleIds[0];
 
       // 3. Idempotent: tìm virtual conv đã có cho cặp (contact, nick) chưa
       const externalThreadId = `virtual:${contactId}:${myNickId}`;
@@ -638,6 +660,13 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       });
 
       if (existing) {
+        // M55: idempotent — sale touch virtual conv → attach collaborator
+        await attachContactCollaboratorByUser({
+          orgId: user.orgId,
+          contactId,
+          userId: user.id,
+          source: 'virtual_chat_open',
+        });
         return reply.status(200).send({ conversationId: existing.id, created: false });
       }
 
@@ -654,6 +683,15 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           tab: 'main',
         },
         select: { id: true },
+      });
+
+      // M55 2026-05-30: Sale vừa mở virtual chat → auto-attach collaborator.
+      // Đảm bảo counter "Cùng chăm" tự tăng, KH hiện trong list của sale.
+      await attachContactCollaboratorByUser({
+        orgId: user.orgId,
+        contactId,
+        userId: user.id,
+        source: 'virtual_chat_open',
       });
 
       // 5. M53.1 2026-05-30: Welcome AI message lần đầu — hardcode (KHÔNG gọi Gemini)
@@ -735,12 +773,57 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const existing = await prisma.contact.findFirst({
         where: { id, orgId: user.orgId },
         select: {
-          id: true, status: true, fullName: true, phone: true, source: true,
+          id: true, status: true, statusId: true, fullName: true, phone: true, source: true,
           assignedUserId: true, crmName: true, email: true, gender: true,
           birthDate: true, leadScore: true, addressLine: true, occupation: true,
         },
       });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
+
+      // M55 2026-05-30: Gate edit theo ContactAccess (RBAC hole trước đây — ai
+      // trong org cũng PUT được). Bây giờ chỉ owner/admin + primary/collaborator
+      // mới sửa được. Sale khác → 403 "KH không thuộc danh sách chăm của bạn".
+      try {
+        await assertContactEditable({
+          userId: user.id,
+          orgId: user.orgId,
+          legacyRole: user.role,
+          contactId: id,
+        });
+      } catch (permErr: any) {
+        const code = permErr?.statusCode ?? 403;
+        return reply.status(code).send({
+          error: permErr?.code || 'CONTACT_EDIT_FORBIDDEN',
+          message: permErr?.message || 'Không có quyền sửa KH này',
+        });
+      }
+
+      // ── Ngày 1 open issue: PUT contacts accept statusId ─────────────────────
+      // body.statusId truyền string / null / undefined.
+      //   undefined → KHÔNG đụng statusId (giữ nguyên DB).
+      //   null      → clear statusId (đặt về null) — workflow "tháo trạng thái".
+      //   string    → verify Status row exists trong cùng orgId trước khi update.
+      let statusIdPatch: string | null | undefined;
+      if (body.statusId !== undefined) {
+        if (body.statusId === null) {
+          statusIdPatch = null;
+        } else if (typeof body.statusId === 'string' && body.statusId.trim()) {
+          const trimmed = body.statusId.trim();
+          const statusRow = await prisma.status.findFirst({
+            where: { id: trimmed, orgId: user.orgId },
+            select: { id: true },
+          });
+          if (!statusRow) {
+            return reply.status(400).send({
+              error: 'status_not_found',
+              hint: 'statusId không thuộc org hoặc không tồn tại',
+            });
+          }
+          statusIdPatch = trimmed;
+        } else {
+          return reply.status(400).send({ error: 'statusId_invalid' });
+        }
+      }
 
       const updateData: any = {
         fullName: body.fullName,
@@ -757,6 +840,9 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         tags: body.tags,
         metadata: body.metadata,
       };
+      if (statusIdPatch !== undefined) {
+        updateData.statusId = statusIdPatch;
+      }
       if (body.firstContactDate !== undefined) {
         updateData.firstContactDate = body.firstContactDate ? new Date(body.firstContactDate) : null;
       }
@@ -791,6 +877,31 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
+      // Ngày 1 fix: trigger automation rule cho contact_status_changed khi statusId (dynamic) đổi.
+      // Legacy `status` enum đã fire 'status_changed' ở trên — đây là trigger MỚI cho Status table.
+      if (existing.statusId !== updated.statusId) {
+        const org = await prisma.organization.findUnique({
+          where: { id: user.orgId },
+          select: { id: true, name: true },
+        });
+        void runAutomationRules({
+          trigger: 'contact_status_changed',
+          orgId: user.orgId,
+          org,
+          contact: {
+            id: updated.id,
+            fullName: updated.fullName,
+            phone: updated.phone,
+            status: updated.status,
+            source: updated.source,
+            assignedUserId: updated.assignedUserId,
+            // Truyền statusId mới + cũ để rule filter
+            statusId: updated.statusId,
+            previousStatusId: existing.statusId,
+          } as any,
+        });
+      }
+
       // ── ACTIVITY LOG — diff với existing để log đúng action types ─────────
       // Tách action-specific logs (status, score) vs bulk customer_update.
       // Status change ưu tiên (workflow critical), score change track delta.
@@ -802,6 +913,18 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           entityType: 'contact',
           entityId: updated.id,
           details: { old: existing.status, new: updated.status },
+        });
+      }
+      // Ngày 1 fix: log status_id diff song song với legacy status enum.
+      // Khi sale đổi trạng thái dynamic (Status table) → activity feed phải show.
+      if (existing.statusId !== updated.statusId) {
+        logActivity({
+          orgId: user.orgId,
+          userId: user.id,
+          action: 'status_change',
+          entityType: 'contact',
+          entityId: updated.id,
+          details: { oldStatusId: existing.statusId, newStatusId: updated.statusId },
         });
       }
       if (existing.leadScore !== updated.leadScore) {
@@ -845,6 +968,35 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             leadScore: updated.leadScore,
           },
         });
+
+        // M55 2026-05-30: Emit socket cho collaborator để FE toast "Sale X
+        // vừa sửa SDT KH Y lúc HH:mm" — đồng bộ realtime giữa các sale cùng chăm.
+        const io = (app as any).io as Server | undefined;
+        if (io) {
+          // Lấy tên sale + list collaborator userIds
+          const [actor, accesses] = await Promise.all([
+            prisma.user.findUnique({
+              where: { id: user.id },
+              select: { fullName: true, email: true },
+            }),
+            prisma.contactAccess.findMany({
+              where: { contactId: updated.id, orgId: user.orgId },
+              select: { userId: true },
+            }),
+          ]);
+          io.emit('contact:updated', {
+            contactId: updated.id,
+            contactName: updated.crmName || updated.fullName,
+            changedBy: {
+              userId: user.id,
+              fullName: actor?.fullName || actor?.email || 'Sale',
+            },
+            changedFields: Object.keys(infoDiff),
+            changes: infoDiff,
+            notifyUserIds: accesses.map((a) => a.userId).filter((uid) => uid !== user.id),
+            at: new Date().toISOString(),
+          });
+        }
       }
 
       return updated;
@@ -870,6 +1022,22 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
       const existing = await prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true, tags: true } });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
+
+      // M55 2026-05-30: Gate edit theo ContactAccess (cùng pattern PUT /contacts/:id)
+      try {
+        await assertContactEditable({
+          userId: user.id,
+          orgId: user.orgId,
+          legacyRole: user.role,
+          contactId: id,
+        });
+      } catch (permErr: any) {
+        const code = permErr?.statusCode ?? 403;
+        return reply.status(code).send({
+          error: permErr?.code || 'CONTACT_EDIT_FORBIDDEN',
+          message: permErr?.message || 'Không có quyền sửa tags KH này',
+        });
+      }
 
       const oldTags = Array.isArray(existing.tags) ? (existing.tags as string[]) : [];
       const updated = await prisma.contact.update({ where: { id }, data: { tags: filteredTags } });
