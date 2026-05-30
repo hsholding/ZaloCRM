@@ -299,23 +299,28 @@ function onSkip() {
 .suggest-table tr:hover { background: #f8fafc; }   /* AT.surfaceSoft */
 
 .suggest-table td {
-  padding: 12px 8px;                    /* row height ~44px Airtable-density */
-  vertical-align: middle;
+  padding: 12px 8px;                    /* row height ~48px Airtable-density */
+  vertical-align: middle;               /* M55.6: căn giữa toàn bộ cells trong row */
   font-size: 14px;
+  line-height: 1.4;                     /* M55.6: line-height đồng nhất tránh lệch dòng */
 }
 .suggest-table td:first-child {
-  width: 36px;
+  width: 44px;                          /* M55.6: tăng từ 36 để chứa checkbox 22px + padding */
   padding-right: 0;
+  text-align: center;                   /* M55.6: checkbox căn giữa cột */
 }
 
-/* M55.5: Checkbox 18px + accent đen brand (Airtable native) */
+/* M55.6 2026-05-30: Checkbox 18→22px (25% bigger) anh chốt — dễ tick + cân với font 14px.
+   Vẫn accent-color AT.ink. Align middle với row qua vertical-align kế thừa từ td. */
 .suggest-table input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   accent-color: #181d26;                /* AT.ink — tick màu đen brand */
   cursor: pointer;
   margin: 0;
   border-radius: 4px;
+  vertical-align: middle;               /* M55.6: thẳng hàng với text 14px line-height 1.4 */
+  display: inline-block;
 }
 .suggest-table input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.5; }
 
@@ -325,11 +330,21 @@ function onSkip() {
   font-weight: 500;
   color: #41454d;                       /* AT.muted */
   letter-spacing: 0.16px;
+  /* M55.6: line-height đồng nhất + vertical align middle */
+  line-height: 1.4;
+  vertical-align: middle;
 }
 .field-value {
   font-size: 14px;
   font-weight: 400;                     /* bodyMd — bỏ 500 để không quá đậm */
   color: #181d26;                       /* AT.ink */
+  /* M55.6: wrap span pills + text trong flex để align middle đồng nhất */
+  line-height: 1.4;
+  vertical-align: middle;
+}
+/* M55.6: ép pill (Đã có / Sẽ ghi đè) align middle với text giá trị */
+.field-value > * {
+  vertical-align: middle;
 }
 
 /* ── Pills ── */
