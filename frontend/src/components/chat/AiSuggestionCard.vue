@@ -10,18 +10,23 @@
     </div>
 
     <table class="suggest-table">
-      <tr v-for="row in rows" :key="row.field">
+      <tr
+        v-for="row in rows"
+        :key="row.field"
+        :class="{ 'row-will-overwrite': row.isExisting && checked[row.field] }"
+      >
         <td>
           <input
             type="checkbox"
             v-model="checked[row.field]"
-            :disabled="applying || row.isExisting"
-            :title="row.isExisting ? 'KH đã có giá trị này — không cần cập nhật' : ''"
+            :disabled="applying"
+            :title="row.isExisting ? 'KH đã có giá trị này — tick để GHI ĐÈ bằng giá trị AI mới' : 'Tick để áp dụng lên Contact'"
           />
         </td>
         <td class="field-label">{{ row.label }}</td>
         <td class="field-value">
           <span v-if="row.isExisting" class="existing-pill">✓ Đã có</span>
+          <span v-if="row.isExisting && checked[row.field]" class="overwrite-pill" title="Sẽ ghi đè giá trị cũ">⚠ Sẽ ghi đè</span>
           {{ row.displayValue }}
         </td>
       </tr>
@@ -286,6 +291,20 @@ function onSkip() {
   background: #f1f5f9;
   color: #64748b;
   margin-right: 6px;
+}
+/* M55.4 2026-05-30: warning khi sale tick row "Đã có" → sẽ overwrite */
+.overwrite-pill {
+  display: inline-block;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: #fed7aa;
+  color: #c2410c;
+  margin-right: 6px;
+  font-weight: 600;
+}
+.suggest-table tr.row-will-overwrite {
+  background: #fff7ed;
 }
 .empty-row {
   color: #94a3b8;
