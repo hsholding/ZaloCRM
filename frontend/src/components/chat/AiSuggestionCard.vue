@@ -244,111 +244,176 @@ function onSkip() {
 </script>
 
 <style scoped>
+/* M55.5 2026-05-30 — Airtable-native AI suggestion card
+   Tokens: phase7/design-tokens.ts (AT.ink #181d26, hairline #dddddd,
+   muted #41454d, body #333840, surfaceSoft #f8fafc, signatureForest tint).
+   Anh chốt: text + checkbox to hơn, spacing thoáng, border subtle, font-weight 500. */
+
 .ai-suggest-card {
-  margin-top: 6px;
-  background: #fff;
-  border: 1px solid #c7d2fe;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.1);
+  margin-top: 8px;
+  background: #ffffff;
+  border: 1px solid #dddddd;            /* AT.hairline — bỏ indigo */
+  border-radius: 10px;                  /* RADIUS.md */
+  padding: 16px 18px;                   /* SPACE.md — thoáng */
+  font-size: 14px;                      /* TYPE.bodyMd — tăng từ 12 */
+  line-height: 1.4;
+  color: #333840;                       /* AT.body */
+  box-shadow: none;                     /* Airtable: flat */
 }
+
 .ai-suggest-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px dashed #e0e7ff;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eeeeee;     /* solid hairline — bỏ dashed indigo */
 }
 .ai-suggest-title {
-  font-weight: 600;
-  color: #4338ca;
+  font-size: 15px;
+  font-weight: 500;                     /* Airtable: 500, never 600/700 */
+  color: #181d26;                       /* AT.ink */
+  letter-spacing: 0;
 }
+
 .confidence-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: #dcfce7;
-  color: #166534;
-  font-weight: 600;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 9999px;                /* RADIUS.pill */
+  background: #e3ede4;                  /* AT signatureForest tint */
+  color: #0a2e0e;
+  font-weight: 500;
+  border: 1px solid #c8dccc;
 }
+
+/* ── Table ── */
 .suggest-table {
   width: 100%;
   border-collapse: collapse;
 }
-.suggest-table tr { border-bottom: 1px solid #f1f5f9; }
+.suggest-table tr {
+  border-bottom: 1px solid #f0f1f3;
+  transition: background 0.12s ease;
+}
 .suggest-table tr:last-child { border-bottom: none; }
-.suggest-table td { padding: 5px 4px; vertical-align: middle; }
-.suggest-table td:first-child { width: 22px; }
-.field-label { color: #64748b; width: 110px; font-size: 11px; }
-.field-value { font-weight: 500; color: #1f2937; }
+.suggest-table tr:hover { background: #f8fafc; }   /* AT.surfaceSoft */
+
+.suggest-table td {
+  padding: 12px 8px;                    /* row height ~44px Airtable-density */
+  vertical-align: middle;
+  font-size: 14px;
+}
+.suggest-table td:first-child {
+  width: 36px;
+  padding-right: 0;
+}
+
+/* M55.5: Checkbox 18px + accent đen brand (Airtable native) */
+.suggest-table input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #181d26;                /* AT.ink — tick màu đen brand */
+  cursor: pointer;
+  margin: 0;
+  border-radius: 4px;
+}
+.suggest-table input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.field-label {
+  width: 140px;                         /* tăng để Vietnamese label không wrap */
+  font-size: 14px;
+  font-weight: 500;
+  color: #41454d;                       /* AT.muted */
+  letter-spacing: 0.16px;
+}
+.field-value {
+  font-size: 14px;
+  font-weight: 400;                     /* bodyMd — bỏ 500 để không quá đậm */
+  color: #181d26;                       /* AT.ink */
+}
+
+/* ── Pills ── */
 .existing-pill {
   display: inline-block;
-  font-size: 9px;
-  padding: 1px 5px;
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: #64748b;
-  margin-right: 6px;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  background: #f0f1f3;                  /* AT neutral tint */
+  color: #41454d;
+  margin-right: 8px;
+  font-weight: 500;
 }
-/* M55.4 2026-05-30: warning khi sale tick row "Đã có" → sẽ overwrite */
 .overwrite-pill {
   display: inline-block;
-  font-size: 9px;
-  padding: 1px 5px;
-  border-radius: 6px;
-  background: #fed7aa;
-  color: #c2410c;
-  margin-right: 6px;
-  font-weight: 600;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  background: #fdf3df;                  /* AT signatureMustard tint */
+  color: #7a5818;
+  margin-right: 8px;
+  font-weight: 500;
+  border: 1px solid #f0dca8;
 }
 .suggest-table tr.row-will-overwrite {
-  background: #fff7ed;
+  background: #fdf8e0;                  /* AT yellow tint nhạt */
 }
+
 .empty-row {
-  color: #94a3b8;
+  color: #9297a0;
   text-align: center;
-  font-style: italic;
-  padding: 12px !important;
+  font-style: normal;                   /* bỏ italic — Airtable không dùng */
+  padding: 22px !important;
+  font-size: 14px;
 }
+
+/* ── Actions ── */
 .suggest-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed #e0e7ff;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eeeeee;
   justify-content: flex-end;
 }
+
 .btn-apply {
-  padding: 5px 12px;
-  border-radius: 6px;
+  padding: 9px 18px;
+  border-radius: 6px;                   /* RADIUS.sm */
   border: none;
-  background: #6366f1;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
+  background: #181d26;                  /* AT.primary — bỏ indigo */
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
+.btn-apply:hover:not(:disabled) { background: #0d1218; }
 .btn-apply:disabled {
-  background: #c7d2fe;
+  background: #e0e2e6;                  /* AT.surfaceStrong */
+  color: #9297a0;
   cursor: not-allowed;
 }
+
 .btn-skip {
-  padding: 5px 12px;
+  padding: 9px 18px;
   border-radius: 6px;
-  background: #fff;
-  color: #64748b;
-  font-size: 12px;
-  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #181d26;                       /* dark text, không xám */
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid #dddddd;            /* AT.hairline */
   cursor: pointer;
+  transition: background 0.12s ease;
 }
+.btn-skip:hover:not(:disabled) { background: #f8fafc; }
+
 .error-row {
-  margin-top: 6px;
-  padding: 4px 8px;
-  background: #fee2e2;
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #fde8e8;
   color: #991b1b;
-  border-radius: 4px;
-  font-size: 11px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid #fbd2d2;
 }
 </style>
