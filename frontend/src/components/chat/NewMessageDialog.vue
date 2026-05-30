@@ -272,10 +272,13 @@
     </v-card>
 
     <!-- Wedge A 2026-05-28: Thêm KH nhanh khi Zalo lookup miss — SĐT pre-fill từ query -->
+    <!-- M53.3 2026-05-30: NewMessageDialog tự xử lý virtual-conv qua onQuickAddCreated
+         → set autoOpenVirtualChat=false để dialog KHÔNG tự navigate (tránh race 2 POST). -->
     <AddCustomerQuickDialog
       v-model="showQuickAddDialog"
       :default-phone="query"
       lead-source="chat_compose_lookup_miss"
+      :auto-open-virtual-chat="false"
       @created="onQuickAddCreated"
     />
   </v-dialog>
@@ -365,9 +368,26 @@ const showNickPicker = ref(false);
 const nickTriggerEl = ref<HTMLElement | null>(null);
 const resolvedTriggerEl = computed<HTMLElement | null>(() => nickTriggerEl.value);
 
-// Wedge A 2026-05-28: KH no-Zalo vừa lưu → đóng dialog Tin nhắn mới + toast pointer
-function onQuickAddCreated(c: { id: string; fullName: string | null; phone: string | null }) {
-  toast.push(`Đã lưu KH "${c.fullName || c.phone}" — mở Khách hàng để đặt lịch hẹn / ghi chú`, 'success', 3600);
+// M53.3 2026-05-30: KH no-Zalo vừa lưu từ NewMessageDialog → tự mở virtual chat
+// (giống ContactsView FAB). Fix bug "tạo KH 0900444666 mất tích" — KH có trong DB
+// nhưng không có conv để mở. Reuse cùng endpoint POST /contacts/:id/virtual-conversation.
+async function onQuickAddCreated(c: { id: string; fullName: string | null; phone: string | null }) {
+  toast.push(`Đã lưu KH "${c.fullName || c.phone}" — đang mở chat nội bộ...`, 'success', 2400);
+  try {
+    const vcRes = await api.post<{ conversationId: string; created: boolean }>(
+      `/contacts/${c.id}/virtual-conversation`, {},
+    );
+    const convId = vcRes.data?.conversationId;
+    if (convId) {
+      // emit 'opened' để ChatView navigate /chat/:convId (cùng pattern các branch khác)
+      emit('opened', convId);
+      return;
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.message || err?.response?.data?.error;
+    toast.warning(msg || 'KH đã lưu. Mở chat nội bộ ở trang Liên hệ khi cần.', 4000);
+  }
+  // Fallback: vẫn đóng dialog nếu virtual-conv fail (KH đã lưu rồi)
   emit('update:modelValue', false);
 }
 

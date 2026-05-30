@@ -128,8 +128,16 @@ interface Props {
   leadSource?: string;
   /** Pre-fill SĐT — dùng từ NewMessageDialog khi lookup Zalo miss (sale đã gõ SĐT) */
   defaultPhone?: string;
+  /** M53.3 2026-05-30: Dialog tự navigate /chat/:convId sau khi tạo virtual conv.
+   *  Default true (ContactsView FAB). Set false khi parent tự xử lý emit `created`
+   *  (vd NewMessageDialog đang ở /chat, không cần dialog navigate gây race). */
+  autoOpenVirtualChat?: boolean;
 }
-const props = withDefaults(defineProps<Props>(), { leadSource: 'quick_add', defaultPhone: '' });
+const props = withDefaults(defineProps<Props>(), {
+  leadSource: 'quick_add',
+  defaultPhone: '',
+  autoOpenVirtualChat: true,
+});
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void;
@@ -211,7 +219,17 @@ async function onSubmit() {
 
     // M53.1 2026-05-30: Tạo xong KH → tự mở virtual chat để sale ghi nhật ký
     // + AI Trợ Lý welcome ngay. Anh chốt: nhảy thẳng /chat để workflow liền mạch.
+    // M53.3 2026-05-30: Nếu autoOpenVirtualChat=false (NewMessageDialog),
+    // chỉ emit 'created' để parent tự xử lý — tránh race condition 2 lần POST virtual-conv.
     const createdContact = res.data.contact;
+    if (!props.autoOpenVirtualChat) {
+      // Parent quyết định flow (vd NewMessageDialog onQuickAddCreated chain virtual-conv + emit opened)
+      toast.success('Đã lưu khách hàng');
+      emit('created', createdContact);
+      emit('update:modelValue', false);
+      return;
+    }
+
     toast.success('Đã lưu khách hàng — đang mở chat nội bộ...');
     emit('created', createdContact);
 
