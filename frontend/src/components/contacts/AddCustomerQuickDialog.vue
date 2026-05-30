@@ -209,10 +209,26 @@ async function onSubmit() {
       return;
     }
 
-    // Created → toast + emit + close
-    toast.success('Đã lưu khách hàng');
-    emit('created', res.data.contact);
-    emit('update:modelValue', false);
+    // M53.1 2026-05-30: Tạo xong KH → tự mở virtual chat để sale ghi nhật ký
+    // + AI Trợ Lý welcome ngay. Anh chốt: nhảy thẳng /chat để workflow liền mạch.
+    const createdContact = res.data.contact;
+    toast.success('Đã lưu khách hàng — đang mở chat nội bộ...');
+    emit('created', createdContact);
+
+    try {
+      const vcRes = await api.post(`/contacts/${createdContact.id}/virtual-conversation`, {});
+      const conversationId = vcRes.data?.conversationId;
+      emit('update:modelValue', false);
+      if (conversationId) {
+        await router.push(`/chat/${conversationId}`);
+      }
+    } catch (vcErr: any) {
+      // Tạo virtual conv fail (vd chưa kết nối nick Zalo) → vẫn báo thành công create KH,
+      // không block flow. Sale có thể vào Contacts > KH > nút "Mở chat nội bộ" sau.
+      const vcMsg = vcErr?.response?.data?.message;
+      toast.warning(vcMsg || 'KH đã lưu. Mở chat nội bộ ở trang Liên hệ khi cần.', 4000);
+      emit('update:modelValue', false);
+    }
   } catch (err: any) {
     const msg = err?.response?.data?.message || err?.response?.data?.error;
     if (msg === 'invalid_phone' || err?.response?.data?.error === 'invalid_phone') {

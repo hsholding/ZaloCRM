@@ -4,6 +4,8 @@
  * All routes require JWT auth and are scoped to user's org.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import type { Server } from 'socket.io';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
@@ -602,7 +604,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       // 1. Verify contact thuộc org + visible
       const contact = await prisma.contact.findFirst({
         where: { id: contactId, orgId: user.orgId },
-        select: { id: true, fullName: true, crmName: true, hasZalo: true, assignedUserId: true },
+        select: { id: true, fullName: true, crmName: true, phone: true, hasZalo: true, assignedUserId: true },
       });
       if (!contact) return reply.status(404).send({ error: 'Contact không tồn tại' });
       await assertContactVisible({
@@ -654,7 +656,53 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         select: { id: true },
       });
 
-      // 5. Audit log (fire-and-forget)
+      // 5. M53.1 2026-05-30: Welcome AI message lần đầu — hardcode (KHÔNG gọi Gemini)
+      // Anh chốt: khi sale tạo KH mới chưa có Zalo, AI Trợ Lý chào ngay + hướng dẫn
+      // sale chat vào để lưu thông tin bổ sung. Không tốn token Gemini.
+      const khName = contact.crmName || contact.fullName || 'KH';
+      const khPhone = contact.phone || 'chưa có SĐT';
+      const welcomeContent =
+        `Chào anh/chị! Em vừa tạo khách hàng **${khName}** (SĐT ${khPhone}) — KH này chưa có Zalo công khai.\n\n` +
+        `Anh/chị có thể chat vào đây để ghi nhật ký chăm sóc + bổ sung thông tin KH. ` +
+        `Mỗi tin anh/chị gõ, em sẽ tự động gợi ý câu hỏi khai thác và đề xuất cập nhật thông tin lên hệ thống.\n\n` +
+        `Để bắt đầu, anh/chị thử gõ vài thông tin đã biết về KH ${khName} (vd: tuổi, nghề nghiệp, khu vực muốn mua, ngân sách...) để em hỗ trợ nhé!`;
+
+      const welcomeLocalId = `local:${randomUUID()}`;
+      const welcomeMessage = await prisma.message.create({
+        data: {
+          id: randomUUID(),
+          conversationId: created.id,
+          zaloMsgId: welcomeLocalId,
+          zaloMsgIdNum: null,
+          senderType: 'ai_assistant',
+          senderUid: 'ai:virtual-chat',
+          senderName: 'Trợ lý',
+          content: welcomeContent,
+          contentType: 'text',
+          sentAt: new Date(),
+          isLocal: true,
+          sentVia: 'system',
+        },
+      });
+
+      // Update conversation lastMessageAt + preview
+      await prisma.conversation.update({
+        where: { id: created.id },
+        data: { lastMessageAt: new Date() },
+      });
+
+      // Emit socket cho realtime (nếu sale đang mở /chat)
+      const io = (app as any).io as Server | undefined;
+      io?.emit('chat:message', {
+        accountId: myNickId,
+        message: { ...welcomeMessage, zaloMsgIdNum: null as string | null },
+        conversationId: created.id,
+        _virtual: true,
+        _aiAssistant: true,
+        _welcome: true,
+      });
+
+      // 6. Audit log (fire-and-forget)
       logActivity({
         orgId: user.orgId,
         userId: user.id,
@@ -666,6 +714,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           conversationId: created.id,
           nickId: myNickId,
           contactHasZalo: contact.hasZalo,
+          welcomeMessageId: welcomeMessage.id,
         },
       });
 
