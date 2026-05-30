@@ -144,6 +144,13 @@ export interface Message {
   /** Read receipts (Wave 1+2) — chỉ có giá trị cho tin OUTGOING (senderType='self') */
   deliveredAt?: string | null;
   seenAt?: string | null;
+  /** M55 2026-05-30 — sender attribution cho multi-sale cùng chăm.
+   *  Tin self lưu sale nào gõ qua CRM UI. Khác user hiện viewer → render mini avatar. */
+  repliedByUserId?: string | null;
+  repliedBy?: { id: string; fullName: string | null; email: string | null } | null;
+  /** M55 — virtual chat indicators */
+  isLocal?: boolean;
+  metadata?: Record<string, unknown> | null;
 }
 
 /** Sort comparator: primary by zaloMsgIdNum (Zalo Snowflake), fallback sentAt cho row chưa echo */

@@ -292,11 +292,35 @@
           </div>
         </section>
 
-        <!-- Widget 6: Đồng đội chăm KH -->
-        <section class="crm-widget crm-w-team">
+        <!-- M55 2026-05-30: Widget Cùng chăm theo ContactAccess (cover cả KH có Zalo
+             lẫn no-Zalo). Hiện luôn cả khi chỉ 1 sale chăm để minh bạch ai phụ trách. -->
+        <section v-if="cungChamList.length > 0" class="crm-widget crm-w-cung-cham">
+          <div class="crm-w-row">
+            <span class="crm-w-icon">👥</span>
+            <span class="crm-w-title">Sale đang/đã chăm KH ({{ cungChamList.length }})</span>
+          </div>
+          <div class="cung-cham-list">
+            <div v-for="acc in cungChamList" :key="acc.user?.id || acc.createdAt" class="cung-cham-row">
+              <div class="cc-avatar-circle" :style="{ background: ccAvatarColor(acc.user?.fullName || acc.user?.email || '') }">
+                {{ ccInitial(acc.user?.fullName || acc.user?.email || '?') }}
+              </div>
+              <div class="cc-info">
+                <div class="cc-name">
+                  {{ acc.user?.fullName || acc.user?.email || 'Sale' }}
+                  <span v-if="acc.role === 'primary'" class="cc-role-primary" title="Sale phụ trách chính">⭐ Chính</span>
+                  <span v-else class="cc-role-collab" title="Sale cùng chăm">🤝 Cùng chăm</span>
+                </div>
+                <div class="cc-meta">{{ ccSourceLabel(acc.source) }} · {{ ccDateLabel(acc.createdAt) }}</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Widget 6: Đồng đội chăm KH (chỉ hiện cho KH có Zalo — based on Friend nicks chăm) -->
+        <section v-if="teammatesFiltered.length > 0" class="crm-widget crm-w-team">
           <div class="crm-w-row">
             <span class="crm-w-icon">🤝</span>
-            <span class="crm-w-title">Đồng đội cùng chăm KH ({{ teammatesFiltered.length }})</span>
+            <span class="crm-w-title">Nick CRM cùng chăm ({{ teammatesFiltered.length }})</span>
           </div>
           <div v-if="teammatesFiltered.length" class="team-banner">
             💡 {{ teammatesFiltered.length }} sale khác cùng chăm KH này — phối hợp để win-win
@@ -327,7 +351,7 @@
               </button>
             </div>
           </div>
-          <div v-else class="crm-w-empty">Chỉ mình bạn đang chăm KH này</div>
+          <div v-else-if="cungChamList.length === 0" class="crm-w-empty">Chỉ mình bạn đang chăm KH này</div>
         </section>
 
         <!-- Widget 7: Push to Getfly (placeholder) -->
@@ -810,6 +834,49 @@ const teammatesFiltered = computed<Teammate[]>(() => {
 });
 
 const teammatesLoading = computed(() => cockpitLoading.teammates);
+
+// M55 2026-05-30 — Cùng chăm theo ContactAccess (primary + collaborator).
+// Cover cả KH có Zalo (đã có teammatesFiltered từ Friend) + KH no-Zalo (Friend=[]).
+interface CungChamRow {
+  role: 'primary' | 'collaborator';
+  source: string;
+  createdAt: string;
+  user: { id?: string; fullName: string | null; email: string | null } | null;
+}
+const cungChamList = computed<CungChamRow[]>(() => {
+  const list = (props.contact as { contactAccess?: CungChamRow[] } | null | undefined)?.contactAccess;
+  return Array.isArray(list) ? list : [];
+});
+function ccInitial(name: string): string {
+  const t = (name || '').trim();
+  if (!t) return '?';
+  const parts = t.split(/\s+/);
+  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
+}
+const CC_AVATAR_COLORS = ['#0ea5e9', '#f97316', '#10b981', '#a855f7', '#ec4899', '#eab308', '#06b6d4', '#ef4444'];
+function ccAvatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < (seed || '').length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return CC_AVATAR_COLORS[Math.abs(h) % CC_AVATAR_COLORS.length];
+}
+const CC_SOURCE_LABELS: Record<string, string> = {
+  quick_add: 'Tạo KH nhanh',
+  quick_add_duplicate: 'Thêm KH trùng SĐT',
+  virtual_chat_open: 'Mở chat nội bộ',
+  virtual_chat_message: 'Gửi tin chat nội bộ',
+  auto_from_friend: 'Tự động qua Zalo Friend',
+  manual: 'Thủ công',
+};
+function ccSourceLabel(source: string): string {
+  return CC_SOURCE_LABELS[source] || source || 'Khác';
+}
+function ccDateLabel(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' });
+  } catch { return ''; }
+}
 
 const patternIcon = computed(() => {
   const p = cockpit.value?.engagementPattern;
@@ -1716,6 +1783,68 @@ async function onRegenerateHandoff() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* M55 2026-05-30 — Cùng chăm theo ContactAccess */
+.cung-cham-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cung-cham-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #fafbfc;
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 6px;
+}
+.cc-avatar-circle {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.cc-info { flex: 1; min-width: 0; }
+.cc-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--smax-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cc-role-primary {
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+}
+.cc-role-collab {
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid #93c5fd;
+}
+.cc-meta {
+  font-size: 10px;
+  color: var(--smax-grey-700);
+  margin-top: 1px;
 }
 .team-card {
   border: 1px solid var(--smax-grey-200);

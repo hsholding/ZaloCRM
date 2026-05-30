@@ -364,6 +364,7 @@ export async function chatRoutes(app: FastifyInstance) {
               avatarUrl: true,
               phone: true,
               zaloUid: true,
+              hasZalo: true,
               tags: true,
               leadScore: true,
               engagementPattern: true,
@@ -372,6 +373,16 @@ export async function chatRoutes(app: FastifyInstance) {
               statusId: true,
               assignedUserId: true,
               priorityScore: true,
+              // M55 2026-05-30 — Cùng chăm indicator cho ConversationList cột 2
+              // (avatar stack +N). Limit 5 để tránh payload bloat ở list view.
+              contactAccess: {
+                select: {
+                  role: true,
+                  user: { select: { id: true, fullName: true, email: true } },
+                },
+                orderBy: { createdAt: 'asc' },
+                take: 5,
+              },
             },
           },
           zaloAccount: { select: { id: true, displayName: true, avatarUrl: true, zaloUid: true, privacyMode: true, ownerUserId: true } },
@@ -522,7 +533,22 @@ export async function chatRoutes(app: FastifyInstance) {
     const conversation = await prisma.conversation.findFirst({
       where: { id, orgId: user.orgId },
       include: {
-        contact: true,
+        contact: {
+          include: {
+            // M55 2026-05-30 — Full collaborators cho ChatContactPanel + header tooltip.
+            // Detail view nên KHÔNG limit (1 KH thường <10 sale chăm).
+            contactAccess: {
+              select: {
+                role: true,
+                source: true,
+                createdAt: true,
+                user: { select: { id: true, fullName: true, email: true } },
+              },
+              orderBy: { createdAt: 'asc' },
+              take: 20,
+            },
+          },
+        },
         zaloAccount: { select: { id: true, displayName: true, avatarUrl: true, zaloUid: true, status: true } },
         pins: { select: { id: true } },
       },
@@ -781,6 +807,14 @@ export async function chatRoutes(app: FastifyInstance) {
           albumIndex: true,
           albumTotal: true,
           reactions: { select: { emoji: true, reactorId: true } },
+          // M55 2026-05-30 — sender attribution cho multi-sale cùng chăm.
+          // Tin self (sale gửi qua CRM) lưu repliedByUserId — FE render mini avatar
+          // tên sale phía trên bubble khi sale khác (không phải mình) gửi.
+          repliedByUserId: true,
+          repliedBy: { select: { id: true, fullName: true, email: true } },
+          // M55: isLocal/metadata cho virtual chat (đã có sẵn nhưng chưa expose)
+          isLocal: true,
+          metadata: true,
         },
       }),
       prisma.message.count({ where: { conversationId: id } }),

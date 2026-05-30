@@ -108,6 +108,15 @@
             class="ci-nick-mini ci-nick-mini--initial"
             :title="`Nick: ${conv.zaloAccount.displayName}`"
           >{{ (conv.zaloAccount.displayName || '?').charAt(0).toUpperCase() }}</span>
+
+          <!-- M55 2026-05-30: Badge cùng chăm — góc trên-phải avatar KH.
+               Chỉ hiện khi có >=2 sale chăm KH này (avoid noise khi chỉ 1 sale).
+               Tooltip = list collaborators. Click conv để vào panel chi tiết. -->
+          <span
+            v-if="cungChamCount(conv) >= 2"
+            class="ci-cung-cham-badge"
+            :title="cungChamTooltip(conv)"
+          >🤝 {{ cungChamCount(conv) }}</span>
         </div>
 
 
@@ -426,6 +435,23 @@ function mergedTags(conv: Conversation): string[] {
 function isUsableName(s: string | null | undefined): s is string {
   return !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
 }
+// M55 2026-05-30 — Cùng chăm counter cho ConversationList badge
+function cungChamCount(conv: Conversation): number {
+  return (conv.contact as { contactAccess?: unknown[] } | null | undefined)?.contactAccess?.length ?? 0;
+}
+function cungChamTooltip(conv: Conversation): string {
+  const list = ((conv.contact as { contactAccess?: Array<{
+    role: string;
+    user: { fullName: string | null; email: string | null } | null;
+  }> } | null | undefined)?.contactAccess) ?? [];
+  if (!list.length) return '';
+  const names = list.map((a) => {
+    const n = a.user?.fullName || a.user?.email || 'Sale';
+    return a.role === 'primary' ? `⭐ ${n} (chính)` : `🤝 ${n}`;
+  });
+  return `${list.length} sale đang/đã chăm KH này:\n${names.join('\n')}`;
+}
+
 function displayName(conv: Conversation): string {
   if (conv.threadType === 'group') {
     const groupName = (conv as Conversation & { groupName?: string }).groupName;
@@ -1050,6 +1076,25 @@ function onPatternLeave() {
   position: relative;
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+/* M55 2026-05-30 — Cùng chăm badge góc trên-phải avatar KH */
+.ci-cung-cham-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9px;
+  border: 1.5px solid #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+  cursor: help;
+  z-index: 2;
+  line-height: 1.2;
 }
 .ci-nick-mini {
   position: absolute;

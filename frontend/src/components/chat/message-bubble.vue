@@ -33,6 +33,17 @@
           {{ message.senderName || 'Unknown' }}
         </div>
 
+        <!-- M55 2026-05-30: Sender attribution cho multi-sale cùng chăm.
+             Bubble self (tin sale gửi qua CRM) — nếu repliedByUserId !== viewer
+             → hiện badge "Sale X gửi" để phân biệt với tin mình gửi. -->
+        <div
+          v-if="isSelf && otherSaleSenderName"
+          class="other-sale-tag"
+          :title="`Tin do ${otherSaleSenderName} gửi`"
+        >
+          👤 {{ otherSaleSenderName }}
+        </div>
+
         <!-- E04 Tin thu hồi — anh chốt 2026-05-21: icon 🔂 + italic xám + gạch ngang.
              Nội dung gốc giữ lại (gạch ngang) để sale biết KH/sale đã thu hồi cái gì. -->
         <div v-if="message.isDeleted" class="recall-card">
@@ -292,6 +303,8 @@ const props = defineProps<{
   /** Tin OUTGOING cuối cùng — chỉ tin này hiện receipt chip (Zalo native UX,
    *  chốt 2026-05-22). Tin cuối seen ⇒ ngầm hiểu mọi tin trên cũng seen. */
   isLastSelf?: boolean;
+  /** M55 2026-05-30 — viewer userId để phân biệt "tin mình gửi" vs "tin sale khác cùng chăm gửi" */
+  currentUserId?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -305,6 +318,18 @@ const emit = defineEmits<{
   'open-reaction-detail': [payload: { reactions: any[]; message: Message }];
   'jump-to-reply': [msgId: string];
 }>();
+
+// M55 2026-05-30 — Sender attribution: hiện tên sale khác cùng chăm nếu tin
+// self do user khác (collaborator) gửi qua CRM. Skip nếu tin do mình gửi.
+const otherSaleSenderName = computed<string | null>(() => {
+  if (!props.isSelf) return null;
+  const m = props.message as { repliedByUserId?: string | null; repliedBy?: { fullName?: string | null; email?: string | null } | null };
+  const senderUid = m.repliedByUserId;
+  if (!senderUid) return null;
+  if (props.currentUserId && senderUid === props.currentUserId) return null;
+  const name = m.repliedBy?.fullName || m.repliedBy?.email;
+  return name || null;
+});
 
 const SPECIAL_TYPES = new Set([
   'bank_transfer', 'call', 'qr_code', 'reminder', 'poll', 'note', 'forwarded', 'rich', 'location', 'link',
@@ -751,6 +776,20 @@ function openFile(href: string) {
 }
 .sender-name-clickable { cursor: pointer; }
 .sender-name-clickable:hover { text-decoration: underline; }
+
+/* M55 2026-05-30 — Other sale sender tag trên bubble self khi sale cùng chăm gửi */
+.other-sale-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #7c2d12;
+  background: rgba(254, 215, 170, 0.6);
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin-bottom: 4px;
+  display: inline-block;
+  cursor: help;
+  border: 1px solid rgba(251, 146, 60, 0.4);
+}
 
 .message-bubble {
   padding: 8px 13px;

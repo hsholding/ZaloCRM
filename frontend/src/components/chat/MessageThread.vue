@@ -38,6 +38,12 @@
           <!-- Row 1: Name | Gender/Group icon to + Care status -->
           <div class="ch-row-1">
             <div class="ch-name" :title="headerName">{{ headerName }}</div>
+            <!-- M55 2026-05-30: Chip "Cùng chăm N sale" cạnh tên KH, hiện khi >=2 sale chăm -->
+            <span
+              v-if="cungChamCount >= 2"
+              class="ch-cung-cham-chip"
+              :title="cungChamTooltip"
+            >🤝 {{ cungChamCount }} sale</span>
             <span class="ch-sep">|</span>
             <span class="ch-gender-chip" :class="genderChipClass" :title="genderTitle">
               <svg v-if="conversation.threadType === 'group'" class="gender-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -367,6 +373,7 @@
               :is-last-self="item.msg.id === lastSelfMessageId"
               :is-group="conversation.threadType === 'group'"
               :sender-avatar-url="resolveSenderAvatar(item.msg)"
+              :current-user-id="currentUserId"
               @contextmenu="onContextMenu($event, item.msg)"
               @preview-image="openImageLightbox($event, [])"
               @preview-video="previewVideoUrl = $event"
@@ -1233,6 +1240,27 @@ const showOnlineIndicator = computed(() => {
 // dùng làm nhật ký chăm sóc + AI Trợ Lý reply gợi ý. Memory M53.
 const isVirtualConv = computed(() => {
   return Boolean((props.conversation as { isVirtual?: boolean } | undefined)?.isVirtual);
+});
+
+// M55 2026-05-30 — Cùng chăm chip + tooltip cho header chat
+const contactAccessList = computed(() => {
+  const list = (props.conversation?.contact as { contactAccess?: Array<{
+    role: string;
+    source?: string;
+    createdAt?: string;
+    user: { id?: string; fullName: string | null; email: string | null } | null;
+  }> } | null | undefined)?.contactAccess;
+  return Array.isArray(list) ? list : [];
+});
+const cungChamCount = computed(() => contactAccessList.value.length);
+const cungChamTooltip = computed(() => {
+  const list = contactAccessList.value;
+  if (!list.length) return '';
+  const lines = list.map((a) => {
+    const n = a.user?.fullName || a.user?.email || 'Sale';
+    return a.role === 'primary' ? `⭐ ${n} (chính)` : `🤝 ${n}`;
+  });
+  return `${list.length} sale đang/đã chăm KH này:\n${lines.join('\n')}`;
 });
 const virtualStatusLabel = 'KH chưa bật tìm kiếm Zalo công khai';
 const virtualTooltip =
@@ -2358,6 +2386,23 @@ watch(() => props.editingMessage?.id, async (id) => {
   color: var(--smax-grey-300);
   font-weight: 300;
   user-select: none;
+}
+
+/* M55 2026-05-30 — Cùng chăm chip trong chat header */
+.ch-cung-cham-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: linear-gradient(135deg, #fef3c7, #fed7aa);
+  color: #92400e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid #fcd34d;
+  cursor: help;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* Gender/Group chip — icon to + label */
