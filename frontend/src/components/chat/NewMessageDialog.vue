@@ -312,6 +312,8 @@ interface ContactRow {
   tags: unknown;
   statusRef?: { id: string; name: string; color: string | null } | null;
   assignedUser?: { id: string; fullName: string | null } | null;
+  /** M53 2026-05-30 — null/false = KH chưa có Zalo → gate sang virtual chat, KHÔNG gọi findUser. */
+  hasZalo?: boolean | null;
 }
 interface LookupResult {
   found: boolean;
@@ -560,15 +562,32 @@ async function onOpenChat() {
       if (res.data?.created) toast.success('Đã tạo cuộc trò chuyện mới');
       emit('opened', res.data.conversationId);
     } else if (pickedKind.value === 'contact' && pickedId.value) {
-      // Contact đã có trong CRM, nhưng nick này chưa có Friend với KH.
-      // Cần lookup Zalo trước để biết UID per-nick — KHÔNG dùng Contact.zaloUid
-      // vì đó là UID per-viewer của nick KHÁC (sẽ không gửi tin được từ nick này).
       const c = contactRows.value.find(x => x.id === pickedId.value);
       if (!c?.phone) {
         toast.error('KH này chưa có SĐT → không lookup được UID từ nick này');
         return;
       }
-      // Lookup-by-phone để lấy UID per-nick
+
+      // M53 2026-05-30: KH chưa có Zalo (hasZalo=null/false) → MỞ CHAT NỘI BỘ,
+      // KHÔNG gọi findUser (vi phạm policy M52 + chắc chắn fail "zalo:216 User không hợp lệ").
+      // Anh chốt Approach A — virtual chat làm nhật ký, AI Trợ Lý reply.
+      if (!c.hasZalo) {
+        try {
+          const vcRes = await api.post<{ conversationId: string; created: boolean }>(
+            `/contacts/${c.id}/virtual-conversation`, {},
+          );
+          toast.success('Mở chat nội bộ — KH chưa có Zalo, lưu nhật ký + AI gợi ý');
+          emit('opened', vcRes.data.conversationId);
+        } catch (vcErr: any) {
+          const vcMsg = vcErr?.response?.data?.message || vcErr?.response?.data?.error;
+          toast.error(vcMsg || 'Không mở được chat nội bộ');
+        }
+        return;
+      }
+
+      // KH đã có Zalo (hasZalo=true) — gắn vào nick này qua lookup-by-phone.
+      // Cần lookup Zalo trước để biết UID per-nick — KHÔNG dùng Contact.zaloUid
+      // vì đó là UID per-viewer của nick KHÁC (sẽ không gửi tin được từ nick này).
       const luRes = await api.post<LookupResult & { reason?: string; detail?: string }>(
         `/zalo-accounts/${selectedAccountId.value}/friends/lookup-by-phone`,
         { phone: c.phone },

@@ -1158,7 +1158,27 @@ function openDetail(c: Contact) {
 function closeDetailPane() {
   selectedContact.value = null;
 }
-function goChat(c: Contact) {
+// M53 2026-05-30: KH no-Zalo (hasZalo=null/false) → mở virtual chat ngay,
+// KHÔNG dùng query.contactId vì conversations list không chắc có virtual conv
+// (resolve fail → user thấy /chat trống). Tạo virtual conv proactive rồi push trực tiếp /chat/:convId.
+async function goChat(c: Contact) {
+  if (!c.hasZalo) {
+    try {
+      const vcRes = await api.post<{ conversationId: string; created: boolean }>(
+        `/contacts/${c.id}/virtual-conversation`, {},
+      );
+      const convId = vcRes.data?.conversationId;
+      if (convId) {
+        await router.push({ name: 'Chat', params: { convId } });
+        return;
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.response?.data?.error;
+      toast.warning(msg || 'Không mở được chat nội bộ — vui lòng thử lại');
+      return;
+    }
+  }
+  // KH có Zalo → fallback flow cũ: push query.contactId để ChatView resolve.
   router.push({ path: '/chat', query: { contactId: c.id } });
 }
 function onAutomation(_c: Contact) { toast.warning('Automation dialog: chưa implement'); }
