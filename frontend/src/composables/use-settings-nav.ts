@@ -80,7 +80,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     permission: 'admin',
     items: [
       { id: 'statuses', label: 'Trạng thái KH', icon: '🎯', route: '/settings/crm/statuses', permission: 'admin', aliases: ['stage', 'pipeline'] },
-      { id: 'tags', label: 'Tag CRM', icon: '🏷', route: '/settings/crm/tags', permission: 'admin' },
+      { id: 'tags', label: 'Tag CRM (cũ)', icon: '🏷', route: '/settings/crm/tags', permission: 'admin' },
+      { id: 'tags-v2', label: 'Tag v2 — 2 Nhóm', icon: '🆕', route: '/settings/crm/tags-v2', permission: 'admin', aliases: ['tag mới', 'tag taxonomy', 'friend tag', 'crm tag'] },
       { id: 'zalo-labels', label: 'Tag Zalo native', icon: '⚑', route: '/settings/crm/zalo-labels', permission: 'admin', aliases: ['zalo label'] },
       { id: 'scoring', label: 'Lead scoring', icon: '📊', route: '/settings/crm/scoring', permission: 'admin', aliases: ['điểm', 'chấm điểm'] },
       // Phase Lead Pool — bố trí menu 2026-05-29
