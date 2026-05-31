@@ -188,6 +188,12 @@ async function bootstrap() {
   await app.register(notesRoutes);
   await app.register(crmTagRoutes);
   await app.register(crmTagGroupRoutes);
+  // Tag Taxonomy v2 — Wave 3 /plan-eng-review M57 2026-05-31
+  // Mount 3 prefix: /api/v1/tags (definitions), /api/v1/friends/:id/tags, /api/v1/contacts/:id/crm-tags
+  const { registerTagRoutes, registerFriendTagRoutes, registerContactCrmTagRoutes } = await import('./modules/tags/tag-routes.js');
+  await app.register(registerTagRoutes, { prefix: '/api/v1/tags' });
+  await app.register(registerFriendTagRoutes, { prefix: '/api/v1/friends' });
+  await app.register(registerContactCrmTagRoutes, { prefix: '/api/v1/contacts' });
   await app.register(userPreferenceRoutes);
   await app.register(timelineRoutes);
   await app.register(scoringRoutes);
@@ -314,6 +320,13 @@ async function bootstrap() {
     // Phase 6 — Lead Scoring background jobs (decay hourly + stuck detection 6am daily)
     const { startScoringScheduler } = await import('./modules/scoring/scoring-scheduler.js');
     startScoringScheduler({ enabled: config.nodeEnv !== 'test' });
+    // Tag Taxonomy v2 — Wave 3 /plan-eng-review M57 (Issue 6A)
+    // Cron 5 phút batch UPDATE Contact.autoTags từ Redis dirty set.
+    // Wave 5 Slim drop Contact.autoTags → bỏ luôn cron.
+    if (config.nodeEnv !== 'test') {
+      const { startAutoTagsAggregateCron } = await import('./modules/tags/contact-autotags-dirty.js');
+      startAutoTagsAggregateCron();
+    }
     // Phase Internal Contact 2-method 2026-05-23 — cleanup pending handshake > 7 ngày (3am daily)
     const { startInternalContactCleanupCron } = await import('./modules/system-notifications/internal-contact-service.js');
     startInternalContactCleanupCron();
